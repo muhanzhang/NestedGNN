@@ -238,13 +238,15 @@ model = model.to(device)
 
 
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
-scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-    optimizer, factor=args.lr_decay_factor, patience=args.patience, min_lr=0.00001)
 
 if model.__class__.__name__ == 'PPGN':
     scheduler = torch.optim.lr_scheduler.StepLR(
         optimizer, step_size=20, gamma=0.8
     )
+    print('Using StepLR scheduler...')
+else:
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, factor=args.lr_decay_factor, patience=args.patience, min_lr=0.00001)
 
 def train(epoch):
     model.train()
@@ -299,7 +301,10 @@ def loop(start=1, best_val_error=None):
         lr = scheduler.optimizer.param_groups[0]['lr']
         loss = train(epoch)
         val_error = test(val_loader)
-        scheduler.step(val_error)
+        if model.__class__.__name__ == 'PPGN':
+            scheduler.step()
+        else:
+            scheduler.step(val_error)
 
         if best_val_error is None:
             best_val_error = val_error

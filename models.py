@@ -391,7 +391,7 @@ class PPGN(torch.nn.Module):
         self.ppgn_rb3 = RegularBlock(2, 400, 400)
         self.ppgn_fc1 = FullyConnected(400 * 2, 512)
         self.ppgn_fc2 = FullyConnected(512, 256)
-        self.ppgn_fc3 = FullyConnected(256, 1)
+        self.ppgn_fc3 = FullyConnected(256, 1, activation_fn=None)
 
     def forward(self, data):
         # prepare dense data
@@ -743,7 +743,7 @@ class k1_GNN_sub_sep(torch.nn.Module):
         if self.use_ppgn:
             self.ppgn_rb1 = RegularBlock(2, edge_attr_dim + 1 + dataset.num_features, 128)
             self.ppgn_rb2 = RegularBlock(2, 128, 128)
-            self.ppgn_fc = FullyConnected(128 * 2, 64)
+            self.ppgn_fc = FullyConnected(128 * 2, 64, activation_fn=None)
             fc_in += 64
 
         if self.concat:
