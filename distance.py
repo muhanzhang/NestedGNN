@@ -1,4 +1,5 @@
 import torch
+import pdb
 
 
 class Distance(object):
@@ -13,11 +14,13 @@ class Distance(object):
         cat (bool, optional): If set to :obj:`False`, all existing edge
             attributes will be replaced. (default: :obj:`True`)
     """
-    def __init__(self, norm=True, max_value=None, cat=True, relative_pos=False):
+    def __init__(self, norm=True, max_value=None, cat=True, relative_pos=False, 
+                 squared=False):
         self.norm = norm
         self.max = max_value
         self.cat = cat
         self.relative_pos = relative_pos
+        self.squared = squared
 
     def __call__(self, data):
         if type(data) == dict:
@@ -25,7 +28,10 @@ class Distance(object):
 
         (row, col), pos, pseudo = data.edge_index, data.pos, data.edge_attr
 
-        dist = torch.norm(pos[col] - pos[row], p=2, dim=-1).view(-1, 1)
+        if self.squared:
+            dist = ((pos[col] - pos[row]) ** 2).sum(1).view(-1, 1)
+        else:
+            dist = torch.norm(pos[col] - pos[row], p=2, dim=-1).view(-1, 1)
 
         if self.norm and dist.numel() > 0:
             dist = dist / (dist.max() if self.max is None else self.max)

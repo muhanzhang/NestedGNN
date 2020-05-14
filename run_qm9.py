@@ -60,6 +60,12 @@ parser.add_argument('--filter', action='store_true', default=False,
                     help='whether to filter graphs with less than 7 nodes')
 parser.add_argument('--normalize_x', action='store_true', default=False,
                     help='if True, normalize non-binary node features')
+parser.add_argument('--squared_dist', action='store_true', default=False,
+                    help='use squared node distance')
+parser.add_argument('--not_normalize_dist', action='store_true', default=False,
+                    help='do not normalize node distance by max distance of a molecule')
+parser.add_argument('--use_max_dist', action='store_true', default=False,
+                    help='use maximum distance between all nodes as a global feature')
 parser.add_argument('--epochs', type=int, default=200)
 parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--layers', type=int, default=3)
@@ -161,7 +167,12 @@ else:
     dataset = QM9(
         path, 
         transform=T.Compose(
-            [MyTransform(args.convert=='pre'), Distance(relative_pos=args.use_relative_pos)]
+            [
+                MyTransform(args.convert=='pre'), 
+                Distance(norm=args.not_normalize_dist==False, 
+                         relative_pos=args.use_relative_pos, 
+                         squared=args.squared_dist)
+            ]
         ), 
         pre_transform=pre_transform, 
         pre_filter=pre_filter, 
@@ -221,6 +232,7 @@ kwargs = {
     'cont_feat_start_dim': cont_feat_start_dim, 
     'edge_attr_dim': 8 if args.use_relative_pos else 5, 
     'use_ppgn': args.use_ppgn, 
+    'use_max_dist': args.use_max_dist, 
 }
 if True:
     model = eval(args.model)(dataset, **kwargs)
