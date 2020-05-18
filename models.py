@@ -850,7 +850,95 @@ class k1_GNN_sub_sep_ppgn(torch.nn.Module):
         z = self.ppgn_fc2(z)
         return z.view(-1)
 
- 
+
+class k1_GNN_sub_ppgn(torch.nn.Module):
+    def __init__(self, dataset, num_layers=3, num_global_layers=2, 
+                 subgraph_pooling='mean',
+                 use_pos=False, edge_attr_dim=5, **kwargs):
+        super(k1_GNN_sub_ppgn, self).__init__()
+        self.subgraph_pooling = subgraph_pooling
+        self.use_pos = use_pos
+
+        # integer node label feature
+        self.convs = torch.nn.ModuleList()
+        M_in, M_out = dataset.num_features, 32
+        nn = Sequential(Linear(edge_attr_dim, 128), ReLU(), Linear(128, M_in * M_out))
+        self.convs.append(NNConv(M_in, M_out, nn))
+
+        for i in range(num_layers-1):
+            M_in, M_out = M_out, 32
+            nn = Sequential(Linear(edge_attr_dim, 128), ReLU(), Linear(128, M_in * M_out))
+            self.convs.append(NNConv(M_in, M_out, nn))
+        fc_in = M_out
+
+        self.fc1 = torch.nn.Linear(fc_in, 16)
+        # global ppgn modules
+        self.global_blocks = torch.nn.ModuleList()
+        rb = RegularBlock(2, edge_attr_dim + 1 + 16, 128)
+        self.global_blocks.append(rb)
+        for l in range(num_global_layers - 1):
+            rb = RegularBlock(2, 128, 128)
+            self.global_blocks.append(rb)
+        self.global_fc1 = FullyConnected(128 * 2, 128)
+        self.global_fc2 = FullyConnected(128, 1, activation_fn=None)
+
+    def forward(self, data):
+        x = data.x
+        if self.use_pos:
+            x = torch.cat([x, data.pos], 1)
+        for conv in self.convs:
+            x = F.elu(conv(x, data.edge_index, data.edge_attr))
+
+        x = self.fc1(x)
+
+        # subgraph-level pooling
+        if self.subgraph_pooling == 'mean':
+            x = global_mean_pool(x, data.node_to_subgraph)
+        elif self.subgraph_pooling == 'center':
+            node_to_subgraph = data.node_to_subgraph.cpu().numpy()
+            # the first node of each subgraph is its center
+            _, center_indices = np.unique(node_to_subgraph, return_index=True)
+            x = x[center_indices]
+
+        '''global ppgn features'''
+        edge_adj = torch.ones(data.original_edge_attr.shape[0], 1).to(data.x.device)
+        edge_attr = torch.cat(
+                [data.original_edge_attr[:, :4], edge_adj], 1
+        )
+        dense_edge_attr = to_dense_adj(
+            data.original_edge_index, data.subgraph_to_graph, edge_attr
+        )  # |graphs| * max_nodes * max_nodes * attr_dim
+
+        # diag_node_attr
+        dense_node_attr = to_dense_batch(
+            x, data.subgraph_to_graph
+        )[0]  # |graphs| * max_nodes * 16
+        dense_pos = to_dense_batch(
+            data.original_pos, data.subgraph_to_graph
+        )[0]  # |graphs| * max_nodes * 3
+        shape = dense_node_attr.shape
+        shape = (shape[0], shape[1], shape[1], shape[2])
+        diag_node_attr = torch.empty(*shape).to(data.x.device)
+        dense_dist_mat = torch.zeros(
+            shape[0], shape[1], shape[1], 1
+        ).to(data.x.device)
+        for g in range(shape[0]):
+            g_dist_mat = dist.squareform(dist.pdist(dense_pos[g].cpu().numpy()))
+            g_dist_mat = torch.tensor(g_dist_mat).unsqueeze(0).to(data.x.device)
+            dense_dist_mat[g, :, :, 0] = g_dist_mat
+            for i in range(shape[-1]):
+                diag_node_attr[g, :, :, i] = torch.diag(dense_node_attr[g, :, i])
+        z = torch.cat([dense_edge_attr, dense_dist_mat, diag_node_attr], -1)
+        z = torch.transpose(z, 1, 3)
+
+        for rb in self.global_blocks:
+            z = rb(z)
+        z = diag_offdiag_maxpool(z)
+        z = self.global_fc1(z)
+        z = self.global_fc2(z)
+        return z.view(-1)
+
+         
 class NestedPPGN(torch.nn.Module):
     def __init__(self, dataset, num_layers=2, num_global_layers=2, 
                  edge_attr_dim=5, **kwargs):

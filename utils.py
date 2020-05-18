@@ -10,7 +10,7 @@ from torch_scatter import scatter_min
 from batch import Batch
 
 
-def create_subgraphs(data, h=1, use_hop_label=False, sample_ratio=1.0, 
+def create_subgraphs(data, h=1, use_hop_label=False, one_hot=True, sample_ratio=1.0, 
     max_nodes_per_hop=None):
     # Given a PyG graph data, extract an h-hop enclosing subgraph for each of its
     # nodes, and combine these node-subgraphs into a new large disconnected graph
@@ -38,7 +38,10 @@ def create_subgraphs(data, h=1, use_hop_label=False, sample_ratio=1.0,
             if x is not None:
                 x_ = x[nodes_]
             if use_hop_label:
-                hop_label = F.one_hot(hop_label, h_ + 1).to(torch.float)
+                if one_hot:
+                    hop_label = F.one_hot(hop_label, h_ + 1).type_as(x_)
+                else:
+                    hop_label = hop_label.unsqueeze(1).type_as(x_)
                 if x_ is not None:
                     x_ = torch.cat([hop_label, x_], 1)
                 else:
@@ -113,7 +116,7 @@ def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
 
     subsets = [torch.tensor([node_idx], device=row.device).flatten()]
     if return_hop:
-        hops = [torch.tensor([0], device=row.device).flatten()]
+        hops = [torch.LongTensor([0], device=row.device).flatten()]
     for h in range(num_hops):
         node_mask.fill_(False)
         node_mask[subsets[-1]] = True
@@ -121,7 +124,7 @@ def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
         new_nodes = col[edge_mask]
         subsets.append(new_nodes)
         if return_hop:
-            hops.append(torch.tensor([h+1] * len(new_nodes), device=row.device))
+            hops.append(torch.LongTensor([h+1] * len(new_nodes), device=row.device))
     subset, inverse_map = torch.cat(subsets).unique(return_inverse=True)
     if return_hop:
         hops = torch.cat(hops)
@@ -131,7 +134,7 @@ def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
     subset = torch.cat([torch.tensor([node_idx], device=row.device), subset])
     if return_hop:
         hop = hop[hop != 0]
-        hop = torch.cat([torch.tensor([0], device=row.device), hop])
+        hop = torch.cat([torch.LongTensor([0], device=row.device), hop])
 
     node_mask.fill_(False)
     node_mask[subset] = True
