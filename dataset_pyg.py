@@ -9,8 +9,9 @@ from ogb.io.read_graph_pyg import read_csv_graph_pyg
 
 
 class PygGraphPropPredDataset(InMemoryDataset):
-    def __init__(self, name, root = "dataset", transform=None, pre_transform=None):
+    def __init__(self, name, root = "dataset", transform=None, pre_transform=None, skip_collate=False):
         self.name = name ## original name, e.g., ogbg-mol-tox21
+        self.skip_collate = skip_collate
         self.dir_name = "_".join(name.split("-")) + "_pyg" ## replace hyphen with underline, e.g., ogbg_mol_tox21_pyg
 
         self.original_root = root
@@ -42,7 +43,10 @@ class PygGraphPropPredDataset(InMemoryDataset):
 
         super(PygGraphPropPredDataset, self).__init__(self.root, transform, pre_transform)
 
-        self.data, self.slices = torch.load(self.processed_paths[0])
+        if self.skip_collate:
+            self.data = torch.load(self.processed_paths[0])
+        else:
+            self.data, self.slices = torch.load(self.processed_paths[0])
 
     def get_idx_split(self, split_type = None):
         if split_type is None:
@@ -125,10 +129,44 @@ class PygGraphPropPredDataset(InMemoryDataset):
 
         
 
+        if self.skip_collate:
+            print('Saving...')
+            torch.save(data_list, self.processed_paths[0])
+            return
+       
         data, slices = self.collate(data_list)
 
         print('Saving...')
         torch.save((data, slices), self.processed_paths[0])
+
+    # overwrite original len() and get() in InMemoryDataset to handle skip_collate
+    def len(self):
+        if self.skip_collate:
+            return len(self.data)
+        for item in self.slices.values():
+            return len(item) - 1
+        return 0
+
+    def get(self, idx):
+        if self.skip_collate:
+            return self.data[idx]
+
+        data = self.data.__class__()
+
+        if hasattr(self.data, '__num_nodes__'):
+            data.num_nodes = self.data.__num_nodes__[idx]
+
+        for key in self.data.keys:
+            item, slices = self.data[key], self.slices[key]
+            if torch.is_tensor(item):
+                s = list(repeat(slice(None), item.dim()))
+                s[self.data.__cat_dim__(key,
+                                        item)] = slice(slices[idx],
+                                                       slices[idx + 1])
+            else:
+                s = slice(slices[idx], slices[idx + 1])
+            data[key] = item[s]
+        return data
 
 
 if __name__ == "__main__":
