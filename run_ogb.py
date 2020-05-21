@@ -3,6 +3,9 @@ import torch.optim as optim
 import torch.nn.functional as F
 
 from tqdm import tqdm
+import sys
+import random
+import pdb
 import argparse
 import time
 import numpy as np
@@ -112,9 +115,18 @@ parser.add_argument('--dataset', type=str, default="ogbg-molhiv",
 
 parser.add_argument('--feature', type=str, default="full",
                     help='full feature or simple feature')
+parser.add_argument('--scheduler', action='store_true', default=False, 
+                    help='use a scheduler to reduce learning rate')
+parser.add_argument('--seed', type=int, default=1)
 parser.add_argument('--save_appendix', type=str, default="",
                     help='appendix to save results')
 args = parser.parse_args()
+
+torch.manual_seed(args.seed)
+if torch.cuda.is_available():
+    torch.cuda.manual_seed(args.seed)
+random.seed(args.seed)
+np.random.seed(args.seed)
 
 #device = torch.device("cuda:" + str(args.device)) if torch.cuda.is_available() else torch.device("cpu")
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
@@ -139,6 +151,36 @@ if args.subgraph:
 dataset = PygGraphPropPredDataset(
     name=args.dataset, root=path, pre_transform=pre_transform, 
     skip_collate=args.multiple_h is not None)
+
+if False:  # visualize some graphs
+    import networkx as nx
+    from torch_geometric.utils import to_networkx
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    loader = DataLoader(dataset, batch_size=1, shuffle=False)
+    for data in loader:
+        f = plt.figure(figsize=(20, 20))
+        limits = plt.axis('off')
+        data = data.to(device)
+        if 'name' in data.keys:
+            del data.name
+        if args.subgraph:
+            node_size = 100
+            data.x = data.x[:, 0] # only keep the hop label
+            with_labels = True
+            G = to_networkx(data, node_attrs=['x'])
+            labels = {i: G.nodes[i]['x'] for i in range(len(G))}
+        else:
+            node_size = 300
+            with_labels = False
+            G = to_networkx(data)
+            labels = None
+
+        nx.draw(G, node_size=node_size, arrows=False, with_labels=with_labels,
+                labels=labels)
+        f.savefig('tmp_vis.png')
+        pdb.set_trace()
 
 if args.feature == 'full':
     pass 
@@ -176,6 +218,11 @@ else:
     raise ValueError('Invalid GNN type')
 
 optimizer = optim.Adam(model.parameters(), lr=0.001)
+if args.scheduler:
+    scheduler = torch.optim.lr_scheduler.StepLR(
+        optimizer, step_size=20, gamma=0.5
+    )
+
 
 valid_curve = []
 test_curve = []
@@ -190,6 +237,9 @@ for epoch in range(1, args.epochs + 1):
     train_perf = eval(model, device, train_loader, evaluator)
     valid_perf = eval(model, device, valid_loader, evaluator)
     test_perf = eval(model, device, test_loader, evaluator)
+    
+    if args.scheduler:
+        scheduler.step()
 
     print({'Train': train_perf, 'Validation': valid_perf, 'Test': test_perf})
 
@@ -211,6 +261,8 @@ print('Best train score: {}'.format(best_train))
 print('Test score: {}'.format(test_curve[best_val_epoch]))
 
 if not args.save_appendix == '':
-    torch.save({'Val': valid_curve[best_val_epoch], 'Test': test_curve[best_val_epoch], 'Train': train_curve[best_val_epoch], 'BestTrain': best_train}, 'results/' + args.dataset + args.save_appendix)
+    cmd_input = 'python ' + ' '.join(sys.argv) + '\n'
+    print(cmd_input)
+    torch.save({'Val': valid_curve[best_val_epoch], 'Test': test_curve[best_val_epoch], 'Train': train_curve[best_val_epoch], 'BestTrain': best_train, 'cmd_input': cmd_input}, 'results/' + args.dataset + args.save_appendix)
 
 

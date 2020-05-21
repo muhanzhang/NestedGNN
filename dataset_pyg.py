@@ -2,6 +2,7 @@ from torch_geometric.data import InMemoryDataset
 import pandas as pd
 import shutil, os
 import os.path as osp
+from itertools import repeat
 import torch
 import numpy as np
 from ogb.utils.url import decide_download, download_url, extract_zip

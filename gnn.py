@@ -129,10 +129,12 @@ class NestedGNN(torch.nn.Module):
         else:
             raise ValueError("Invalid graph pooling type.")
 
+        #self.fc = torch.nn.Linear(self.emb_dim * len(hs), self.emb_dim)
         if graph_pooling == "set2set":
-            self.graph_pred_linear = torch.nn.Linear(2*self.emb_dim * len(hs), self.num_tasks)
+            self.graph_pred_linear = torch.nn.Linear(2*self.emb_dim*len(hs), self.num_tasks)
         else:
-            self.graph_pred_linear = torch.nn.Linear(self.emb_dim * len(hs), self.num_tasks)
+            self.graph_pred_linear = torch.nn.Linear(self.emb_dim*len(hs), self.num_tasks)
+        
 
         ### Pooling function to generate sub-graph embeddings
         if self.subgraph_pooling == "sum":
@@ -162,6 +164,7 @@ class NestedGNN(torch.nn.Module):
             x_multi_hop.append(x)
 
         x = torch.cat(x_multi_hop, 1)
+        #x = F.elu(self.fc(x))
 
         return self.graph_pred_linear(x)
 

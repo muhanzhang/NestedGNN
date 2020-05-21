@@ -6,3 +6,4 @@ results/
 *.swp
 *.pyc
 screenlog.*
+tmp_vis.png

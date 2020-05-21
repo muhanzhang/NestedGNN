@@ -181,6 +181,39 @@ else:
 
 dataset = dataset.shuffle()
 
+device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
+
+if False:  # visualize some graphs
+    import networkx as nx
+    from torch_geometric.utils import to_networkx
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    loader = DataLoader(dataset, batch_size=1, shuffle=False)
+    for data in loader:
+        f = plt.figure(figsize=(20, 20))
+        limits = plt.axis('off')
+        data = data.to(device)
+        if 'name' in data.keys:
+            del data.name
+        if args.subgraph:
+            node_size = 100
+            data.x = torch.argmax(data.x[:, :args.h+1], 1).type(torch.int8) # only keep the hop label
+            with_labels = True
+            G = to_networkx(data, node_attrs=['x'])
+            labels = {i: G.nodes[i]['x'] for i in range(len(G))}
+        else:
+            node_size = 300
+            with_labels = False
+            G = to_networkx(data)
+            labels = None
+
+        nx.draw(G, node_size=node_size, arrows=False, with_labels=with_labels,
+                labels=labels)
+        f.savefig('tmp_vis.png')
+        pdb.set_trace()
+
+
 # Normalize targets to mean = 0 and std = 1.
 tenpercent = int(len(dataset) * 0.1)
 if args.multiple_h is not None:
@@ -218,8 +251,6 @@ train_dataset = dataset[2 * tenpercent:]
 test_loader = DataLoader(test_dataset, batch_size=args.batch_size)
 val_loader = DataLoader(val_dataset, batch_size=args.batch_size)
 train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
-
-device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
 
 kwargs = {
     'num_layers': args.layers, 
