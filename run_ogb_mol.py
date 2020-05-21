@@ -132,10 +132,10 @@ np.random.seed(args.seed)
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 if args.multiple_h is not None:
-    from gnn import NestedGNN as GNN
+    from ogb_mol_gnn import NestedGNN as GNN
     args.h = [int(h) for h in args.multiple_h.split(',')]
 else:
-    from gnn import GNN
+    from ogb_mol_gnn import GNN
 
 path = 'data/ogb'
 pre_transform = None
