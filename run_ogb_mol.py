@@ -96,16 +96,27 @@ parser.add_argument('--multiple_h', type=str, default=None,
 parser.add_argument('--use_hop_label', action='store_true', default=False, 
                     help='use one-hot encoding of which hop a node is included in \
                     the enclosing subgraph as additional node features')
+parser.add_argument('--adj_dropout', type=float, default=0,
+                    help='adjacency matrix dropout ratio (default: 0)')
 parser.add_argument('--drop_ratio', type=float, default=0.5,
                     help='dropout ratio (default: 0.5)')
 parser.add_argument('--num_layer', type=int, default=5,
                     help='number of GNN message passing layers (default: 5)')
+parser.add_argument('--num_more_layer', type=int, default=5,
+                    help='for multiple_h, number of more GNN layers than each h (default 2), \
+                    num_layer = h + num_more_layer')
+parser.add_argument('--graph_pooling', type=str, default="mean")
+parser.add_argument('--subgraph_pooling', type=str, default="mean")
+parser.add_argument('--conv_after_subgraph_pooling', action='store_true', default=False, 
+                    help='apply additional graph convolution layers after subgraph pooling')
 parser.add_argument('--emb_dim', type=int, default=300,
                     help='dimensionality of hidden units in GNNs (default: 300)')
 parser.add_argument('--batch_size', type=int, default=32,
                     help='input batch size for training (default: 32)')
 parser.add_argument('--epochs', type=int, default=100,
                     help='number of epochs to train (default: 100)')
+parser.add_argument('--lr', type=float, default=1E-3)
+parser.add_argument('--lr_decay_factor', type=float, default=0.5)
 parser.add_argument('--num_workers', type=int, default=0,
                     help='number of workers (default: 0)')
 parser.add_argument('--dataset', type=str, default="ogbg-molhiv",
@@ -173,7 +184,7 @@ if False:  # visualize some graphs
             G = to_networkx(data)
             labels = None
 
-        nx.draw(G, node_size=node_size, arrows=False, with_labels=with_labels,
+        nx.draw(G, node_size=node_size, arrows=True, with_labels=with_labels,
                 labels=labels)
         f.savefig('tmp_vis.png')
         pdb.set_trace()
@@ -199,7 +210,14 @@ test_loader = DataLoader(dataset[split_idx["test"]], batch_size=args.batch_size,
 kwargs = {
         'use_hop_label': args.use_hop_label, 
         'h': args.h, 
+        'adj_dropout': args.adj_dropout, 
+        'graph_pooling': args.graph_pooling, 
+        "subgraph_pooling": args.subgraph_pooling, 
+        'num_layer': args.num_layer, 
+        # required when using multiple_h
+        'num_more_layer': args.num_more_layer, 
         'hs': args.h, 
+        'conv_after_subgraph_pooling': args.conv_after_subgraph_pooling, 
 }
 
 if args.gnn == 'gin':
@@ -213,10 +231,10 @@ elif args.gnn == 'gcn-virtual':
 else:
     raise ValueError('Invalid GNN type')
 
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=args.lr)
 if args.scheduler:
     scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=20, gamma=0.5
+        optimizer, step_size=20, gamma=args.lr_decay_factor
     )
 
 
@@ -250,6 +268,7 @@ else:
     best_val_epoch = np.argmin(np.array(valid_curve))
     best_train = min(train_curve)
 
+print('Seed ' + str(args.seed))
 print('Finished training!')
 print('Best validation score: {}'.format(valid_curve[best_val_epoch]))
 print('Train score: {}'.format(train_curve[best_val_epoch]))

@@ -41,7 +41,10 @@ def create_subgraphs(data, h=1, use_hop_label=False, one_hot=True, sample_ratio=
                 if one_hot:
                     hop_label = F.one_hot(hop_label, h_ + 1).type_as(x_)
                 else:
-                    hop_label = hop_label.unsqueeze(1).type_as(x_)
+                    if x_ is not None:
+                        hop_label = hop_label.unsqueeze(1).type_as(x_)
+                    else:
+                        hop_label = hop_label.unsqueeze(1).type(torch.long)
                 if x_ is not None:
                     x_ = torch.cat([hop_label, x_], 1)
                 else:

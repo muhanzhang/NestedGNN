@@ -107,6 +107,8 @@ parser.add_argument('--batch_size', type=int, default=32,
                     help='input batch size for training (default: 32)')
 parser.add_argument('--epochs', type=int, default=100,
                     help='number of epochs to train (default: 100)')
+parser.add_argument('--lr', type=float, default=1E-3)
+parser.add_argument('--lr_decay_factor', type=float, default=0.5)
 parser.add_argument('--num_workers', type=int, default=0,
                     help='number of workers (default: 0)')
 parser.add_argument('--dataset', type=str, default="ogbg-ppa",
@@ -206,10 +208,10 @@ elif args.gnn == 'gcn-virtual':
 else:
     raise ValueError('Invalid GNN type')
 
-optimizer = optim.Adam(model.parameters(), lr=0.001)
+optimizer = optim.Adam(model.parameters(), lr=args.lr)
 if args.scheduler:
     scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=20, gamma=0.5
+        optimizer, step_size=20, gamma=args.lr_decay_factor
     )
 
 
