@@ -16,7 +16,7 @@ class GNN(torch.nn.Module):
 
     def __init__(self, num_tasks, num_layer = 5, emb_dim = 300, 
                     gnn_type = 'gin', virtual_node = True, residual = False, drop_ratio = 0.5, JK = "last", graph_pooling = "mean", subgraph_pooling = "mean", 
-                    use_hop_label=False, h=None, conv_after_subgraph_pooling=False, virtual_node_2=True,  **kwargs):
+                    use_hop_label=False, h=None, conv_after_subgraph_pooling=False, virtual_node_2=True, concat_hop_embedding=False, **kwargs):
         '''
             num_tasks (int): number of labels to be predicted
             virtual_node (bool): whether to add virtual node or not
@@ -38,9 +38,11 @@ class GNN(torch.nn.Module):
 
         ### GNN to generate node embeddings
         if virtual_node:
-            self.gnn_node = GNN_node_Virtualnode(num_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h)
+            self.gnn_node = GNN_node_Virtualnode(num_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h, 
+                                                 concat_hop_embedding=concat_hop_embedding)
         else:
-            self.gnn_node = GNN_node(num_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h)
+            self.gnn_node = GNN_node(num_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=hk, 
+                                     concat_hop_embedding=concat_hop_embedding)
         
         if self.conv_after_subgraph_pooling:
             if virtual_node_2:
@@ -99,7 +101,7 @@ class NestedGNN(torch.nn.Module):
 
     def __init__(self, num_tasks, num_more_layer = 2, emb_dim = 300, 
                     gnn_type = 'gin', virtual_node = True, residual = False, drop_ratio = 0.5, JK = "last", graph_pooling = "mean", subgraph_pooling = "mean", 
-                    use_hop_label=False, hs=None, **kwargs):
+                    use_hop_label=False, hs=None, concat_hop_embedding=False, sum_multi_hop_embedding=False,  **kwargs):
         '''
             num_tasks (int): number of labels to be predicted
             virtual_node (bool): whether to add virtual node or not
@@ -115,14 +117,17 @@ class NestedGNN(torch.nn.Module):
         self.graph_pooling = graph_pooling
         self.subgraph_pooling = subgraph_pooling
         self.hs = hs
+        self.sum_multi_hop_embedding = sum_multi_hop_embedding
 
         ### GNN to generate node embeddings
         self.gnn_node = torch.nn.ModuleList()
         for h in hs:
             if virtual_node:
-                self.gnn_node.append(GNN_node_Virtualnode(h + num_more_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h))
+                self.gnn_node.append(GNN_node_Virtualnode(h + num_more_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h, 
+                    concat_hop_embedding=concat_hop_embedding))
             else:
-                self.gnn_node.append(GNN_node(h + num_more_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h))
+                self.gnn_node.append(GNN_node(h + num_more_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h, 
+                    concat_hop_embedding=concat_hop_embedding))
 
         ### Pooling function to generate whole-graph embeddings
         if self.graph_pooling == "sum":
@@ -139,10 +144,11 @@ class NestedGNN(torch.nn.Module):
             raise ValueError("Invalid graph pooling type.")
 
         #self.fc = torch.nn.Linear(self.emb_dim * len(hs), self.emb_dim)
+        final_emb_dim = self.emb_dim*len(hs) if not self.sum_multi_hop_embedding else self.emb_dim
         if graph_pooling == "set2set":
-            self.graph_pred_linear = torch.nn.Linear(2*self.emb_dim*len(hs), self.num_tasks)
+            self.graph_pred_linear = torch.nn.Linear(2*final_emb_dim, self.num_tasks)
         else:
-            self.graph_pred_linear = torch.nn.Linear(self.emb_dim*len(hs), self.num_tasks)
+            self.graph_pred_linear = torch.nn.Linear(final_emb_dim, self.num_tasks)
         
 
         ### Pooling function to generate sub-graph embeddings
@@ -172,7 +178,10 @@ class NestedGNN(torch.nn.Module):
             
             x_multi_hop.append(x)
 
-        x = torch.cat(x_multi_hop, 1)
+        if self.sum_multi_hop_embedding:
+            x = torch.sum(torch.stack(x_multi_hop), dim=0)
+        else:
+            x = torch.cat(x_multi_hop, 1)
         #x = F.elu(self.fc(x))
 
         return self.graph_pred_linear(x)
@@ -181,13 +190,16 @@ class NestedGNN(torch.nn.Module):
 # a customized AtomEncoder to handle hop label
 class AtomEncoder(torch.nn.Module):
 
-    def __init__(self, emb_dim, use_hop_label=False, h=None):
+    def __init__(self, emb_dim, use_hop_label=False, h=None, concat=False):
         super(AtomEncoder, self).__init__()
 
         self.atom_embedding_list = torch.nn.ModuleList()
         full_atom_feature_dims = get_atom_feature_dims()
         if use_hop_label:
             full_atom_feature_dims = [h+1] + full_atom_feature_dims
+        self.concat = concat
+        if self.concat:
+            emb_dim //= 2
 
         for i, dim in enumerate(full_atom_feature_dims):
             emb = torch.nn.Embedding(dim, emb_dim)
@@ -196,8 +208,14 @@ class AtomEncoder(torch.nn.Module):
 
     def forward(self, x):
         x_embedding = 0
-        for i in range(x.shape[1]):
-            x_embedding += self.atom_embedding_list[i](x[:,i])
+        if self.concat:
+            hop_embedding = self.atom_embedding_list[0](x[:,0])
+            for i in range(1, x.shape[1]):
+                x_embedding += self.atom_embedding_list[i](x[:,i])
+            x_embedding = torch.cat([hop_embedding, x_embedding], 1)
+        else:
+            for i in range(x.shape[1]):
+                x_embedding += self.atom_embedding_list[i](x[:,i])
 
         return x_embedding
 
@@ -264,7 +282,8 @@ class GNN_node(torch.nn.Module):
     Output:
         node representations
     """
-    def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "last", residual = False, gnn_type = 'gin', use_hop_label=False, h=None):
+    def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "last", residual = False, gnn_type = 'gin', use_hop_label=False, h=None, 
+                 concat_hop_embedding=False):
         '''
             emb_dim (int): node embedding dimensionality
             num_layer (int): number of GNN message passing layers
@@ -281,7 +300,7 @@ class GNN_node(torch.nn.Module):
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
 
-        self.atom_encoder = AtomEncoder(emb_dim, use_hop_label, h)
+        self.atom_encoder = AtomEncoder(emb_dim, use_hop_label, h, concat=concat_hop_embedding)
 
         ###List of GNNs
         self.convs = torch.nn.ModuleList()
@@ -339,7 +358,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
         node representations
     """
     def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "last", residual = False, gnn_type = 'gin', use_hop_label=False, h=None, adj_dropout=0,
-                 skip_atom_encoder=False):
+                 skip_atom_encoder=False, concat_hop_embedding=False):
         '''
             emb_dim (int): node embedding dimensionality
         '''
@@ -357,7 +376,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
 
         self.skip_atom_encoder = skip_atom_encoder
         if not self.skip_atom_encoder:
-            self.atom_encoder = AtomEncoder(emb_dim, use_hop_label, h)
+            self.atom_encoder = AtomEncoder(emb_dim, use_hop_label, h, concat=concat_hop_embedding)
 
         ### set the initial virtual node embedding to 0.
         self.virtualnode_embedding = torch.nn.Embedding(1, emb_dim)

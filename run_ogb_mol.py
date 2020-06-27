@@ -96,6 +96,8 @@ parser.add_argument('--multiple_h', type=str, default=None,
 parser.add_argument('--use_hop_label', action='store_true', default=False, 
                     help='use one-hot encoding of which hop a node is included in \
                     the enclosing subgraph as additional node features')
+parser.add_argument('--concat_hop_embedding', action='store_true', default=False, 
+                    help='concatenate hop label embedding with atom embeddings instead of summing')
 parser.add_argument('--adj_dropout', type=float, default=0,
                     help='adjacency matrix dropout ratio (default: 0)')
 parser.add_argument('--drop_ratio', type=float, default=0.5,
@@ -105,6 +107,8 @@ parser.add_argument('--num_layer', type=int, default=5,
 parser.add_argument('--num_more_layer', type=int, default=5,
                     help='for multiple_h, number of more GNN layers than each h (default 2), \
                     num_layer = h + num_more_layer')
+parser.add_argument('--sum_multi_hop_embedding', action='store_true', default=False, 
+                    help='sum graph embeddings from multiple_h instead of concatenate')
 parser.add_argument('--graph_pooling', type=str, default="mean")
 parser.add_argument('--subgraph_pooling', type=str, default="mean")
 parser.add_argument('--conv_after_subgraph_pooling', action='store_true', default=False, 
@@ -214,10 +218,12 @@ kwargs = {
         'graph_pooling': args.graph_pooling, 
         "subgraph_pooling": args.subgraph_pooling, 
         'num_layer': args.num_layer, 
+        'conv_after_subgraph_pooling': args.conv_after_subgraph_pooling, 
+        'concat_hop_embedding': args.concat_hop_embedding, 
         # required when using multiple_h
         'num_more_layer': args.num_more_layer, 
         'hs': args.h, 
-        'conv_after_subgraph_pooling': args.conv_after_subgraph_pooling, 
+        'sum_multi_hop_embedding': args.sum_multi_hop_embedding, 
 }
 
 if args.gnn == 'gin':
