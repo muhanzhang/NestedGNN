@@ -53,26 +53,33 @@ def create_subgraphs(data, h=1, use_hop_label=False, one_hot=True, sample_ratio=
                 edge_attr_ = data.edge_attr[edge_mask_]
             if data.pos is not None:
                 pos_ = data.pos[nodes_]
-            data_ = Data(x_, edge_index_, edge_attr_, None, pos_)
+            #data_ = Data(x_, edge_index_, edge_attr_, None, pos_)
+            data_ = data.__class__(x_, edge_index_, edge_attr_, None, pos_)
             data_.num_nodes = nodes_.shape[0]
             subgraphs.append(data_)
 
         # new_data is a treated as a big disconnected graph of the batch of subgraphs
         new_data = Batch.from_data_list(subgraphs)
-        new_data.y = data.y
+        #new_data.y = data.y
         new_data.num_nodes = sum(data_.num_nodes for data_ in subgraphs)
         new_data.num_subgraphs = len(subgraphs)
         
         new_data.original_edge_index = edge_index
         new_data.original_edge_attr = data.edge_attr
         new_data.original_pos = data.pos
-
+            
         # rename batch, because batch will be used to store node_to_graph assignment
         new_data.node_to_subgraph = new_data.batch
         del new_data.batch
 
         # create a subgraph_to_graph assignment vector (all zero)
         new_data.subgraph_to_graph = torch.zeros(len(subgraphs), dtype=torch.long)
+        
+        # copy remaining graph attributes
+        for k, v in data:
+            if k not in ['x', 'edge_index', 'edge_attr', 'pos', 'num_nodes', 'batch']:
+                new_data[k] = v
+        
 
         if len(h) == 1:
             return new_data

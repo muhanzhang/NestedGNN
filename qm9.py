@@ -19,6 +19,7 @@ try:
     rdBase.DisableLog('rdApp.error')
 except ImportError:
     rdkit = None
+rdkit = None # always use processed version
 
 HAR2EV = 27.2113825435
 KCALMOL2EV = 0.04336414

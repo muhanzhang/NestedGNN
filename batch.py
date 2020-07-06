@@ -1,6 +1,7 @@
 import torch
 import torch_geometric
 from torch_geometric.data import Data
+import pdb
 
 # This is a copy from torch_geometric/data/batch.py
 # which is modified to support batch asignment in subgraph level
@@ -60,6 +61,10 @@ class Batch(Data):
                     cumsum[key] = cumsum[key] + 1
                 elif key == 'original_edge_index':
                     cumsum[key] = cumsum[key] + data.num_subgraphs
+                elif key == 'tree_edge_index':
+                    cumsum[key] = cumsum[key] + data.num_cliques
+                elif key == 'atom2clique_index':
+                    cumsum[key] = cumsum[key] + torch.tensor([[data.num_atoms], [data.num_cliques]])
                 else:
                     cumsum[key] = cumsum[key] + data.__inc__(key, item)
                 batch[key].append(item)
@@ -130,6 +135,10 @@ class Batch(Data):
                     cumsum[key] = cumsum[key] + 1
                 elif key == 'original_edge_index':
                     cumsum[key] = cumsum[key] + data.num_subgraphs
+                elif key == 'tree_edge_index':
+                    cumsum[key] = cumsum[key] + data.num_cliques
+                elif key == 'atom2clique_index':
+                    cumsum[key] = cumsum[key] + torch.tensor([[data.num_atoms], [data.num_cliques]])
                 else:
                     cumsum[key] = cumsum[key] + data.__inc__(key, data[key])
             data_list.append(data)
