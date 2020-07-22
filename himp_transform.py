@@ -36,8 +36,8 @@ class JunctionTreeData(Data):
         if key == 'tree_edge_index':
             return self.x_clique.size(0)
         elif key == 'atom2clique_index':
-            #return torch.tensor([[self.x.size(0)], [self.x_clique.size(0)]])
             return torch.tensor([[self.num_atoms], [self.x_clique.size(0)]])
+            #return torch.tensor([[self.x.size(0)], [self.x_clique.size(0)]])
         else:
             return super(JunctionTreeData, self).__inc__(key, item)
 

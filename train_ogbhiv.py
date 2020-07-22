@@ -18,11 +18,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--dataset', type=str, default="ogbg-molhiv",
                     help='dataset name (ogbg-molhiv, ogbg-molpcba, etc.)')
 parser.add_argument('--device', type=int, default=0)
+parser.add_argument('--num_runs', type=int, default=10)
 parser.add_argument('--hidden_channels', type=int, default=64)
 parser.add_argument('--num_layers', type=int, default=2)
 parser.add_argument('--num_tree_layers', type=int, default=1)
 parser.add_argument('--dropout', type=float, default=0.5)
 parser.add_argument('--epochs', type=int, default=50)
+parser.add_argument('--lr', type=float, default=1E-4)
+parser.add_argument('--batch_size', type=int, default=128,
+                    help='input batch size for training (default: 128)')
 parser.add_argument('--no_inter_message_passing', action='store_true')
 parser.add_argument('--subgraph', action='store_true', default=False, 
                     help='whether to use SubgraphConv')
@@ -54,7 +58,10 @@ if args.subgraph:
         path += '_hoplabel'
     pre_transform = lambda x: create_subgraphs(x, args.h, args.use_hop_label, one_hot=False)
 
-transform = Compose([OGBTransform(), JunctionTree(), pre_transform])
+if args.subgraph:
+    transform = Compose([OGBTransform(), JunctionTree(), pre_transform])
+else:
+    transform = Compose([OGBTransform(), JunctionTree()])
 
 name = args.dataset
 evaluator = Evaluator(name)
@@ -65,7 +72,7 @@ train_dataset = dataset[split_idx['train']]
 val_dataset = dataset[split_idx['valid']]
 test_dataset = dataset[split_idx['test']]
 
-train_loader = DataLoader(train_dataset, 128, shuffle=True, num_workers=12)
+train_loader = DataLoader(train_dataset, args.batch_size, shuffle=True, num_workers=12)
 val_loader = DataLoader(val_dataset, 1000, shuffle=False, num_workers=12)
 test_loader = DataLoader(test_dataset, 1000, shuffle=False, num_workers=12)
 
@@ -117,13 +124,13 @@ def test(loader):
 
 
 test_perfs = []
-for run in range(1, 11):
+for run in range(1, 1+args.num_runs):
     print()
     print(f'Run {run}:')
     print()
 
     model.reset_parameters()
-    optimizer = Adam(model.parameters(), lr=0.0001)
+    optimizer = Adam(model.parameters(), lr=args.lr)
 
     best_val_perf = test_perf = 0
     for epoch in range(1, args.epochs + 1):

@@ -4,14 +4,17 @@ import pdb
 import torch.nn as nn
 import torch.nn.functional as F
 import scipy.sparse as ssp
+from scipy import linalg
+from scipy.sparse.linalg import inv
 import numpy as np
 from torch_geometric.data import Data
+from torch_geometric.utils import to_scipy_sparse_matrix
 from torch_scatter import scatter_min
 from batch import Batch
 
 
 def create_subgraphs(data, h=1, use_hop_label=False, one_hot=True, sample_ratio=1.0, 
-    max_nodes_per_hop=None):
+    max_nodes_per_hop=None, use_resistance_distance=False):
     # Given a PyG graph data, extract an h-hop enclosing subgraph for each of its
     # nodes, and combine these node-subgraphs into a new large disconnected graph
 
@@ -49,6 +52,7 @@ def create_subgraphs(data, h=1, use_hop_label=False, one_hot=True, sample_ratio=
                     x_ = torch.cat([hop_label, x_], 1)
                 else:
                     x_ = hop_label
+
             if data.edge_attr is not None:
                 edge_attr_ = data.edge_attr[edge_mask_]
             if data.pos is not None:
@@ -56,6 +60,18 @@ def create_subgraphs(data, h=1, use_hop_label=False, one_hot=True, sample_ratio=
             #data_ = Data(x_, edge_index_, edge_attr_, None, pos_)
             data_ = data.__class__(x_, edge_index_, edge_attr_, None, pos_)
             data_.num_nodes = nodes_.shape[0]
+
+            if use_resistance_distance:
+                adj = to_scipy_sparse_matrix(edge_index_, num_nodes=nodes_.shape[0]).tocsr()
+                laplacian = ssp.csgraph.laplacian(adj).toarray()
+                L_inv = linalg.pinv(laplacian)
+                lxx = L_inv[0, 0]
+                lyy = L_inv[list(range(len(L_inv))), list(range(len(L_inv)))]
+                lxy = L_inv[0, :]
+                lyx = L_inv[:, 0]
+                rd_to_x = torch.FloatTensor((lxx + lyy - lxy - lyx)).unsqueeze(1)
+                data_.rd = rd_to_x
+
             subgraphs.append(data_)
 
         # new_data is a treated as a big disconnected graph of the batch of subgraphs

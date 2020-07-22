@@ -87,6 +87,10 @@ def eval(model, device, loader, evaluator):
 parser = argparse.ArgumentParser(description='GNN baselines on ogbgmol* data with Pytorch Geometrics')
 parser.add_argument('--gnn', type=str, default='gin-virtual',
                     help='GNN gin, gin-virtual, or gcn, or gcn-virtual (default: gin-virtual)')
+parser.add_argument('--residual', action='store_true', default=False, 
+                    help='enable residual connections between layers')
+parser.add_argument('--residual_plus', action='store_true', default=False, 
+                    help='enable residual_plus connections between layers')
 parser.add_argument('--subgraph', action='store_true', default=False, 
                     help='whether to use SubgraphConv')
 parser.add_argument('--h', type=int, default=1, help='hop of enclosing subgraph')
@@ -96,6 +100,10 @@ parser.add_argument('--multiple_h', type=str, default=None,
 parser.add_argument('--use_hop_label', action='store_true', default=False, 
                     help='use one-hot encoding of which hop a node is included in \
                     the enclosing subgraph as additional node features')
+parser.add_argument('--scalar_hop_label', action='store_true', default=False, 
+                    help='instead of using one-hot encoding of the hops, use a linear layer to \
+                    project the scalar hop label to emb_dim and sum with other atom embeddings')
+parser.add_argument('--use_resistance_distance', action='store_true', default=False)
 parser.add_argument('--concat_hop_embedding', action='store_true', default=False, 
                     help='concatenate hop label embedding with atom embeddings instead of summing')
 parser.add_argument('--adj_dropout', type=float, default=0,
@@ -121,8 +129,8 @@ parser.add_argument('--epochs', type=int, default=100,
                     help='number of epochs to train (default: 100)')
 parser.add_argument('--lr', type=float, default=1E-3)
 parser.add_argument('--lr_decay_factor', type=float, default=0.5)
-parser.add_argument('--num_workers', type=int, default=0,
-                    help='number of workers (default: 0)')
+parser.add_argument('--num_workers', type=int, default=2,
+                    help='number of workers (default: 2)')
 parser.add_argument('--dataset', type=str, default="ogbg-molhiv",
                     help='dataset name (ogbg-molhiv, ogbg-molpcba, etc.)')
 parser.add_argument('--feature', type=str, default="full",
@@ -145,6 +153,7 @@ device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cp
 if args.multiple_h is not None:
     from ogb_mol_gnn import NestedGNN as GNN
     args.h = [int(h) for h in args.multiple_h.split(',')]
+    args.num_workers = 0  # otherwise memory tend to leak
 else:
     from ogb_mol_gnn import GNN
 
@@ -157,7 +166,14 @@ if args.subgraph:
         path += '/sg_' + ''.join(str(h) for h in args.h)
     if args.use_hop_label:
         path += '_hoplabel'
-    pre_transform = lambda x: create_subgraphs(x, args.h, args.use_hop_label, one_hot=False)
+    if args.use_resistance_distance:
+        path += '_rd'
+    def pre_transform(g):
+        return create_subgraphs(g, args.h, args.use_hop_label, one_hot=False, 
+            use_resistance_distance=args.use_resistance_distance)
+    #pre_transform = lambda x: create_subgraphs(x, args.h, args.use_hop_label, one_hot=False, 
+        #use_resistance_distance=args.use_resistance_distance)
+
 ### automatic dataloading and splitting
 dataset = PygGraphPropPredDataset(
     name=args.dataset, root=path, pre_transform=pre_transform, 
@@ -178,7 +194,10 @@ if False:  # visualize some graphs
             del data.name
         if args.subgraph:
             node_size = 100
-            data.x = data.x[:, 0] # only keep the hop label
+            if args.use_hop_label:
+                data.x = data.x[:, 0] # only keep the hop label
+            elif args.use_resistance_distance:
+                data.x = data.rd
             with_labels = True
             G = to_networkx(data, node_attrs=['x'])
             labels = {i: G.nodes[i]['x'] for i in range(len(G))}
@@ -224,6 +243,10 @@ kwargs = {
         'num_more_layer': args.num_more_layer, 
         'hs': args.h, 
         'sum_multi_hop_embedding': args.sum_multi_hop_embedding, 
+        'use_resistance_distance':args.use_resistance_distance, 
+        "scalar_hop_label": args.scalar_hop_label, 
+        'residual': args.residual, 
+        'residual_plus': args.residual_plus, 
 }
 
 if args.gnn == 'gin':
@@ -244,46 +267,40 @@ if args.scheduler:
     )
 
 
-valid_curve = []
-test_curve = []
-train_curve = []
 
+best_valid_perf = -1E6 if 'classification' in dataset.task_type else 1E6
 for epoch in range(1, args.epochs + 1):
-    print("=====Epoch {}".format(epoch))
+    print("=====Epoch {}, save_appendix {}".format(epoch, args.save_appendix))
     print('Training...')
     train(model, device, train_loader, optimizer, dataset.task_type)
 
     print('Evaluating...')
-    train_perf = eval(model, device, train_loader, evaluator)
-    valid_perf = eval(model, device, valid_loader, evaluator)
-    test_perf = eval(model, device, test_loader, evaluator)
+    valid_perf = eval(model, device, valid_loader, evaluator)[dataset.eval_metric]
+    if 'classification' in dataset.task_type:
+        if valid_perf > best_valid_perf:
+            best_valid_perf = valid_perf
+            best_test_perf = eval(model, device, test_loader, evaluator)[dataset.eval_metric]
+            best_train_perf = eval(model, device, train_loader, evaluator)[dataset.eval_metric]
+    else:
+        if valid_perf < best_valid_perf:
+            best_valid_perf = valid_perf
+            best_test_perf = eval(model, device, test_loader, evaluator)[dataset.eval_metric]
+            best_train_perf = eval(model, device, train_loader, evaluator)[dataset.eval_metric]
     
     if args.scheduler:
         scheduler.step()
 
-    print({'Train': train_perf, 'Validation': valid_perf, 'Test': test_perf})
+    print({'Cur Val': valid_perf, 'Best Val': best_valid_perf, 'Best Train': best_train_perf, 'Best Test': best_test_perf})
 
-    train_curve.append(train_perf[dataset.eval_metric])
-    valid_curve.append(valid_perf[dataset.eval_metric])
-    test_curve.append(test_perf[dataset.eval_metric])
-
-if 'classification' in dataset.task_type:
-    best_val_epoch = np.argmax(np.array(valid_curve))
-    best_train = max(train_curve)
-else:
-    best_val_epoch = np.argmin(np.array(valid_curve))
-    best_train = min(train_curve)
-
-print('Seed ' + str(args.seed))
 print('Finished training!')
-print('Best validation score: {}'.format(valid_curve[best_val_epoch]))
-print('Train score: {}'.format(train_curve[best_val_epoch]))
-print('Best train score: {}'.format(best_train))
-print('Test score: {}'.format(test_curve[best_val_epoch]))
+print('Seed ' + str(args.seed))
+print('Best validation score: {}'.format(best_valid_perf))
+print('Train score: {}'.format(best_train_perf))
+print('Test score: {}'.format(best_test_perf))
 
 if not args.save_appendix == '':
     cmd_input = 'python ' + ' '.join(sys.argv) + '\n'
     print(cmd_input)
-    torch.save({'Val': valid_curve[best_val_epoch], 'Test': test_curve[best_val_epoch], 'Train': train_curve[best_val_epoch], 'BestTrain': best_train, 'cmd_input': cmd_input}, 'results/' + args.dataset + args.save_appendix)
+    torch.save({'Val': best_valid_perf, 'Test': best_test_perf, 'Train': best_train_perf, 'cmd_input': cmd_input}, 'results/' + args.dataset + args.save_appendix)
 
 

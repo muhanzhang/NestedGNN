@@ -8,6 +8,12 @@ import numpy as np
 from ogb.utils.url import decide_download, download_url, extract_zip
 from ogb.io.read_graph_pyg import read_csv_graph_pyg
 
+import time
+import multiprocessing as mp
+from tqdm import tqdm
+
+def parallel_worker(g, pyg_dataset):
+    return pyg_dataset.pre_transform(g)
 
 class PygGraphPropPredDataset(InMemoryDataset):
     def __init__(self, name, root = "dataset", transform=None, pre_transform=None, skip_collate=False):
@@ -127,7 +133,25 @@ class PygGraphPropPredDataset(InMemoryDataset):
                 g = self.pre_transform(g)
                 new_data_list.append(g)
             data_list = new_data_list 
-
+            '''
+            # parallel, not working
+            start = time.time()
+            pool = mp.Pool(mp.cpu_count())
+            #pool = mp.Pool(4)
+            results = pool.starmap_async(parallel_worker, [(g, self) for g in data_list])
+            remaining = results._number_left
+            pbar = tqdm(total=remaining)
+            while True:
+                pbar.update(remaining - results._number_left)
+                if results.ready(): break
+                remaining = results._number_left
+                time.sleep(1)
+            data_list = results.get()
+            pool.close()
+            pbar.close()
+            end = time.time()
+            print("Time eplased for pre_transform: {}s".format(end-start))
+            '''
         
 
         if self.skip_collate:
