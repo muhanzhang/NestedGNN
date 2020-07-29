@@ -119,6 +119,7 @@ parser.add_argument('--sum_multi_hop_embedding', action='store_true', default=Fa
                     help='sum graph embeddings from multiple_h instead of concatenate')
 parser.add_argument('--graph_pooling', type=str, default="mean")
 parser.add_argument('--subgraph_pooling', type=str, default="mean")
+parser.add_argument('--center_pool_virtual', action='store_true', default=False) 
 parser.add_argument('--conv_after_subgraph_pooling', action='store_true', default=False, 
                     help='apply additional graph convolution layers after subgraph pooling')
 parser.add_argument('--emb_dim', type=int, default=300,
@@ -247,6 +248,7 @@ kwargs = {
         "scalar_hop_label": args.scalar_hop_label, 
         'residual': args.residual, 
         'residual_plus': args.residual_plus, 
+        'center_pool_virtual': args.center_pool_virtual, 
 }
 
 if args.gnn == 'gin':

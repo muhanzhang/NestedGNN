@@ -19,6 +19,13 @@ def center_pool(x, node_to_subgraph):
     _, center_indices = np.unique(node_to_subgraph, return_index=True)
     x = x[center_indices]
     return x
+
+def center_pool_virtual(x, node_to_subgraph, virtual_embedding):
+    node_to_subgraph = node_to_subgraph.cpu().numpy()
+    # the first node of each subgraph is its center
+    _, center_indices = np.unique(node_to_subgraph, return_index=True)
+    x[center_indices] = x[center_indices] + virtual_embedding
+    return x
     
 
 class GNN(torch.nn.Module):
@@ -26,7 +33,7 @@ class GNN(torch.nn.Module):
     def __init__(self, num_tasks, num_layer = 5, emb_dim = 300, 
                     gnn_type = 'gin', virtual_node = True, residual = False, drop_ratio = 0.5, JK = "last", graph_pooling = "mean", subgraph_pooling = "mean", 
                     use_hop_label=False, h=None, conv_after_subgraph_pooling=False, virtual_node_2=True, concat_hop_embedding=False, 
-                    use_resistance_distance=False, residual_plus=False, **kwargs):
+                    use_resistance_distance=False, residual_plus=False, center_pool_virtual=False, **kwargs):
         '''
             num_tasks (int): number of labels to be predicted
             virtual_node (bool): whether to add virtual node or not
@@ -42,6 +49,7 @@ class GNN(torch.nn.Module):
         self.graph_pooling = graph_pooling
         self.subgraph_pooling = subgraph_pooling
         self.conv_after_subgraph_pooling = conv_after_subgraph_pooling
+        self.center_pool_virtual = center_pool_virtual
 
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
@@ -49,7 +57,7 @@ class GNN(torch.nn.Module):
         ### GNN to generate node embeddings
         if virtual_node:
             self.gnn_node = GNN_node_Virtualnode(num_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h, 
-                                                 concat_hop_embedding=concat_hop_embedding, use_resistance_distance=use_resistance_distance)
+                                                 concat_hop_embedding=concat_hop_embedding, use_resistance_distance=use_resistance_distance, center_pool_virtual=center_pool_virtual)
         else:
             self.gnn_node = GNN_node(num_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=hk, 
                                      concat_hop_embedding=concat_hop_embedding)
@@ -407,7 +415,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
     """
     def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "last", residual = False, gnn_type = 'gin', use_hop_label=False, h=None, adj_dropout=0,
                  skip_atom_encoder=False, concat_hop_embedding=False, use_resistance_distance=False, scalar_hop_label=False, 
-                 residual_plus=False):
+                 residual_plus=False, center_pool_virtual=False):
         '''
             emb_dim (int): node embedding dimensionality
         '''
@@ -421,6 +429,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
         self.adj_dropout = adj_dropout
         self.use_resistance_distance = use_resistance_distance
         self.residual_plus = residual_plus
+        self.center_pool_virtual = center_pool_virtual
         if use_resistance_distance:
             self.dense_projection = torch.nn.Linear(1, emb_dim)
 
@@ -501,7 +510,10 @@ class GNN_node_Virtualnode(torch.nn.Module):
         else:
             for layer in range(self.num_layer):
                 ### add message from virtual nodes to graph nodes
-                h_list[layer] = h_list[layer] + virtualnode_embedding[batch]
+                if self.center_pool_virtual:
+                    h_list[layer] = center_pool_virtual(h_list[layer], batched_data.node_to_subgraph, virtualnode_embedding[batched_data.subgraph_to_graph])
+                else:
+                    h_list[layer] = h_list[layer] + virtualnode_embedding[batch]
 
                 ### Message passing among graph nodes
                 h = self.convs[layer](h_list[layer], edge_index, edge_attr)
@@ -521,7 +533,11 @@ class GNN_node_Virtualnode(torch.nn.Module):
                 ### update the virtual nodes
                 if layer < self.num_layer - 1:
                     ### add message from graph nodes to virtual nodes
-                    virtualnode_embedding_temp = global_add_pool(h_list[layer], batch) + virtualnode_embedding
+                    if self.center_pool_virtual:
+                        center_embedding = center_pool(h_list[layer], batched_data.node_to_subgraph)
+                        virtualnode_embedding_temp = global_add_pool(center_embedding, batched_data.subgraph_to_graph) + virtualnode_embedding
+                    else: 
+                        virtualnode_embedding_temp = global_add_pool(h_list[layer], batch) + virtualnode_embedding
                     ### transform virtual nodes using MLP
 
                     if self.residual:
