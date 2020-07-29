@@ -24,10 +24,18 @@ datasets = [
 'ogbg-molmuv', 
 prefixs = [
 '_h0_s', 
-'_h0_scheduler_s', 
-'_hoplabel_h4_l6_mean_mean_s', 
-'_hoplabel_h4_l6_mean_mean_scheduler_s', 
-'_hoplabel_mh234_ml2_mean_mean_s'
+'_h0_l2_s', 
+'_h0_l3_s', 
+'_h0_l4_s', 
+#'_h0_scheduler_s', 
+#'_hoplabel_h4_l6_mean_mean_s', 
+#'_hoplabel_h4_l6_mean_mean_scheduler_s', 
+#'_hoplabel_mh234_ml2_mean_mean_s'
+'_rd_h1_l2_mean_mean_s', 
+'_rd_h2_l4_mean_mean_s', 
+'_rd_h3_l5_mean_mean_s', 
+'_rd_h4_l6_mean_mean_s',
+'_rd_h5_l7_mean_mean_s', 
 #'_hoplabel_h5_l7_mean_mean_scheduler_s', 
 #'_hoplabel_h3_l5_mean_mean_scheduler_s', 
 #'_hoplabel_h2_l4_mean_mean_scheduler_s', 

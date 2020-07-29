@@ -8,9 +8,18 @@ from torch_geometric.utils import degree, dropout_adj
 from ogb.utils.features import get_atom_feature_dims
 from torch_geometric.data import Data
 import math
+import numpy as np
 
 from torch_scatter import scatter_mean
 import pdb
+
+def center_pool(x, node_to_subgraph):
+    node_to_subgraph = node_to_subgraph.cpu().numpy()
+    # the first node of each subgraph is its center
+    _, center_indices = np.unique(node_to_subgraph, return_index=True)
+    x = x[center_indices]
+    return x
+    
 
 class GNN(torch.nn.Module):
 
@@ -47,9 +56,9 @@ class GNN(torch.nn.Module):
         
         if self.conv_after_subgraph_pooling:
             if virtual_node_2:
-                self.gnn_node_2 = GNN_node_Virtualnode(4, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, skip_atom_encoder=True, residual_plus=residual_plus)
+                self.gnn_node_2 = GNN_node_Virtualnode(1, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, skip_atom_encoder=True, residual_plus=residual_plus)
             else:
-                self.gnn_node_2 = GNN_node(4, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, skip_atom_encoder=True)
+                self.gnn_node_2 = GNN_node(1, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, skip_atom_encoder=True)
 
         ### Pooling function to generate whole-graph embeddings
         if self.graph_pooling == "sum":
@@ -91,6 +100,8 @@ class GNN(torch.nn.Module):
             self.subpool = global_max_pool
         elif self.subgraph_pooling == "attention":
             self.subpool = GlobalAttention(gate_nn = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.BatchNorm1d(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, 1)))
+        elif self.subgraph_pooling == "center":
+            self.subpool = center_pool
         else:
             self.subpool = None
 
@@ -413,8 +424,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
         if use_resistance_distance:
             self.dense_projection = torch.nn.Linear(1, emb_dim)
 
-        if self.num_layer < 2:
-            raise ValueError("Number of GNN layers must be greater than 1.")
+        if self.num_layer < 1:
+            raise ValueError("Number of GNN layers must be greater than 0.")
 
         self.skip_atom_encoder = skip_atom_encoder
         if not self.skip_atom_encoder:
