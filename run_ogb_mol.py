@@ -9,6 +9,7 @@ import pdb
 import argparse
 import time
 import numpy as np
+from torch_geometric.transforms import Compose
 
 ### importing OGB
 from ogb.graphproppred import Evaluator
@@ -16,6 +17,8 @@ from dataset_pyg import PygGraphPropPredDataset  # customized to support pre_tra
 
 from dataloader import DataLoader  # use a custom dataloader to handle subgraphs
 from utils import create_subgraphs
+
+from himp_transform import JunctionTree
 
 cls_criterion = torch.nn.BCEWithLogitsLoss()
 reg_criterion = torch.nn.MSELoss()
@@ -104,6 +107,9 @@ parser.add_argument('--scalar_hop_label', action='store_true', default=False,
                     help='instead of using one-hot encoding of the hops, use a linear layer to \
                     project the scalar hop label to emb_dim and sum with other atom embeddings')
 parser.add_argument('--use_resistance_distance', action='store_true', default=False)
+parser.add_argument('--use_junction_tree', action='store_true', default=False)
+parser.add_argument('--inter_message_passing', action='store_true', default=False)
+parser.add_argument('--use_atom_linear', action='store_true', default=False)
 parser.add_argument('--concat_hop_embedding', action='store_true', default=False, 
                     help='concatenate hop label embedding with atom embeddings instead of summing')
 parser.add_argument('--adj_dropout', type=float, default=0,
@@ -172,8 +178,14 @@ if args.subgraph:
     def pre_transform(g):
         return create_subgraphs(g, args.h, args.use_hop_label, one_hot=False, 
             use_resistance_distance=args.use_resistance_distance)
-    #pre_transform = lambda x: create_subgraphs(x, args.h, args.use_hop_label, one_hot=False, 
-        #use_resistance_distance=args.use_resistance_distance)
+
+if args.use_junction_tree:
+    path += '_jt'
+    if pre_transform is None:
+        pre_transform = JunctionTree()
+    else:
+        pre_transform = Compose([JunctionTree(), pre_transform])
+
 
 ### automatic dataloading and splitting
 dataset = PygGraphPropPredDataset(
@@ -249,6 +261,9 @@ kwargs = {
         'residual': args.residual, 
         'residual_plus': args.residual_plus, 
         'center_pool_virtual': args.center_pool_virtual, 
+        'use_junction_tree': args.use_junction_tree, 
+        'inter_message_passing': args.inter_message_passing, 
+        'use_atom_linear': args.use_atom_linear, 
 }
 
 if args.gnn == 'gin':

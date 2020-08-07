@@ -59,9 +59,9 @@ if args.subgraph:
     pre_transform = lambda x: create_subgraphs(x, args.h, args.use_hop_label, one_hot=False)
 
 if args.subgraph:
-    transform = Compose([OGBTransform(), JunctionTree(), pre_transform])
+    transform = Compose([JunctionTree(), pre_transform])
 else:
-    transform = Compose([OGBTransform(), JunctionTree()])
+    transform = JunctionTree()
 
 name = args.dataset
 evaluator = Evaluator(name)
@@ -99,8 +99,10 @@ def train(epoch):
     for data in train_loader:
         data = data.to(device)
         optimizer.zero_grad()
-        out = model(data)
-        loss = torch.nn.BCEWithLogitsLoss()(out, data.y.to(out.dtype))
+        mask = ~torch.isnan(data.y)
+        out = model(data)[mask]
+        y = data.y.to(torch.float)[mask]
+        loss = torch.nn.BCEWithLogitsLoss()(out, y)
         loss.backward()
         total_loss += loss.item() * data.num_graphs
         optimizer.step()

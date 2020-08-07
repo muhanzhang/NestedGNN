@@ -54,16 +54,20 @@ prefixs = [
     '_hoplabel_h5_l7_mean_mean_scheduler_s', 
     '_hoplabel_h3_l5_mean_mean_scheduler_s', 
 ]
+'''
 
+seed_range = range(1, 6)
 datasets = [
-    'ogbg-molpcba', 
+    'ogbg-molhiv', 
 ]
 prefixs = [
-    '_h0_s', 
     '_hoplabel_h4_l6_mean_mean_s', 
+    '_hoplabel_h4_l6_cpv_center_mean_s', 
+    '_rd_h4_l6_cpv_center_mean_s', 
+    '_hoplabel_h3_l4_cpv_center_mean_s', 
+    '_hoplabel_jt_h2_l4_mean_mean_s', 
 ]
 
-'''
 
 
 print()

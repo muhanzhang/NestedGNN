@@ -10,7 +10,7 @@ from torch_geometric.data import Data
 import math
 import numpy as np
 
-from torch_scatter import scatter_mean
+from torch_scatter import scatter, scatter_mean
 import pdb
 
 def center_pool(x, node_to_subgraph):
@@ -33,7 +33,7 @@ class GNN(torch.nn.Module):
     def __init__(self, num_tasks, num_layer = 5, emb_dim = 300, 
                     gnn_type = 'gin', virtual_node = True, residual = False, drop_ratio = 0.5, JK = "last", graph_pooling = "mean", subgraph_pooling = "mean", 
                     use_hop_label=False, h=None, conv_after_subgraph_pooling=False, virtual_node_2=True, concat_hop_embedding=False, 
-                    use_resistance_distance=False, residual_plus=False, center_pool_virtual=False, **kwargs):
+                    use_resistance_distance=False, residual_plus=False, center_pool_virtual=False, use_junction_tree=False, inter_message_passing=False, use_atom_linear=False,  **kwargs):
         '''
             num_tasks (int): number of labels to be predicted
             virtual_node (bool): whether to add virtual node or not
@@ -50,6 +50,9 @@ class GNN(torch.nn.Module):
         self.subgraph_pooling = subgraph_pooling
         self.conv_after_subgraph_pooling = conv_after_subgraph_pooling
         self.center_pool_virtual = center_pool_virtual
+        self.use_junction_tree = use_junction_tree
+        self.inter_message_passing = inter_message_passing
+        self.use_atom_linear = use_atom_linear
 
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
@@ -57,11 +60,12 @@ class GNN(torch.nn.Module):
         ### GNN to generate node embeddings
         if virtual_node:
             self.gnn_node = GNN_node_Virtualnode(num_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h, 
-                                                 concat_hop_embedding=concat_hop_embedding, use_resistance_distance=use_resistance_distance, center_pool_virtual=center_pool_virtual)
+                                                 concat_hop_embedding=concat_hop_embedding, use_resistance_distance=use_resistance_distance, center_pool_virtual=center_pool_virtual, 
+                                                 inter_message_passing=inter_message_passing)
         else:
             self.gnn_node = GNN_node(num_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=hk, 
                                      concat_hop_embedding=concat_hop_embedding)
-        
+
         if self.conv_after_subgraph_pooling:
             if virtual_node_2:
                 self.gnn_node_2 = GNN_node_Virtualnode(1, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, skip_atom_encoder=True, residual_plus=residual_plus)
@@ -113,9 +117,27 @@ class GNN(torch.nn.Module):
         else:
             self.subpool = None
 
+        if self.use_junction_tree and not self.inter_message_passing:
+            self.clique_encoder = torch.nn.Embedding(4, emb_dim)
+            self.clique_convs = torch.nn.ModuleList()
+            self.clique_batch_norms = torch.nn.ModuleList()
+            self.clique_lin = torch.nn.Linear(emb_dim, emb_dim)
+
+            for _ in range(3):
+                self.clique_convs.append(GINConvNoEdge(emb_dim))
+                self.clique_batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
+        elif self.use_junction_tree and self.inter_message_passing: 
+            self.clique_lin = torch.nn.Linear(emb_dim, emb_dim)
+
+        if self.use_atom_linear:
+            self.atom_lin = torch.nn.Linear(emb_dim, emb_dim)
+
 
     def forward(self, data):
-        x = self.gnn_node(data)
+        if self.inter_message_passing:
+            x, x_clique = self.gnn_node(data)
+        else:
+            x = self.gnn_node(data)
 
         if 'node_to_subgraph' in data and 'subgraph_to_graph' in data:
             x = self.subpool(x, data.node_to_subgraph)
@@ -132,6 +154,39 @@ class GNN(torch.nn.Module):
                 x = self.pool(x, data.subgraph_to_graph)
         else:
             x = self.pool(x, data.batch)
+
+        if self.use_atom_linear:
+            x = F.dropout(x, self.drop_ratio, training=self.training)
+            x = self.atom_lin(x)
+
+        # Junction Tree Convolution
+        if self.use_junction_tree and not self.inter_message_passing:
+            x_clique = self.clique_encoder(data.x_clique.squeeze())
+            for i in range(3):
+                x_clique = self.clique_convs[i](x_clique, data.tree_edge_index)
+                x_clique = self.clique_batch_norms[i](x_clique)
+                x_clique = F.relu(x_clique)
+                x_clique = F.dropout(x_clique, self.drop_ratio,
+                                     training=self.training)
+
+            tree_batch = torch.repeat_interleave(data.num_cliques)
+            x_clique = scatter(x_clique, tree_batch, dim=0, dim_size=x.size(0),
+                               reduce='mean')
+            #x_clique = F.dropout(x_clique, self.drop_ratio,training=self.training)
+            #x_clique = self.clique_lin(x_clique)
+            x += x_clique
+        elif self.use_junction_tree and self.inter_message_passing: 
+            tree_batch = torch.repeat_interleave(data.num_cliques)
+            x_clique = scatter(x_clique, tree_batch, dim=0, dim_size=x.size(0),
+                               reduce='mean')
+            x_clique = F.dropout(x_clique, self.drop_ratio,
+                                 training=self.training)
+            x_clique = self.clique_lin(x_clique)
+            x = x + x_clique
+
+        if self.use_atom_linear:
+            x = F.relu(x)
+            x = F.dropout(x, self.drop_ratio, training=self.training)
 
         return self.graph_pred_linear(x)
 
@@ -295,6 +350,30 @@ class GINConv(MessagePassing):
     def update(self, aggr_out):
         return aggr_out
 
+
+class GINConvNoEdge(MessagePassing):
+    def __init__(self, emb_dim):
+        '''
+            emb_dim (int): node embedding dimensionality
+        '''
+
+        super(GINConvNoEdge, self).__init__(aggr = "add")
+
+        self.mlp = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.BatchNorm1d(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, emb_dim))
+        self.eps = torch.nn.Parameter(torch.Tensor([0]))
+        
+    def forward(self, x, edge_index):
+        out = self.mlp((1 + self.eps) *x + self.propagate(edge_index, x=x))
+    
+        return out
+
+    def message(self, x_j):
+        return F.relu(x_j)
+        
+    def update(self, aggr_out):
+        return aggr_out
+
+
 ### GCN convolution along the graph structure
 class GCNConv(MessagePassing):
     def __init__(self, emb_dim):
@@ -415,7 +494,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
     """
     def __init__(self, num_layer, emb_dim, drop_ratio = 0.5, JK = "last", residual = False, gnn_type = 'gin', use_hop_label=False, h=None, adj_dropout=0,
                  skip_atom_encoder=False, concat_hop_embedding=False, use_resistance_distance=False, scalar_hop_label=False, 
-                 residual_plus=False, center_pool_virtual=False):
+                 residual_plus=False, center_pool_virtual=False, inter_message_passing=False):
         '''
             emb_dim (int): node embedding dimensionality
         '''
@@ -430,6 +509,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
         self.use_resistance_distance = use_resistance_distance
         self.residual_plus = residual_plus
         self.center_pool_virtual = center_pool_virtual
+        self.inter_message_passing = inter_message_passing
         if use_resistance_distance:
             self.dense_projection = torch.nn.Linear(1, emb_dim)
 
@@ -449,8 +529,6 @@ class GNN_node_Virtualnode(torch.nn.Module):
         ### batch norms applied to node embeddings
         self.batch_norms = torch.nn.ModuleList()
 
-        ### List of MLPs to transform virtual node at every layer
-        self.mlp_virtualnode_list = torch.nn.ModuleList()
 
         for layer in range(num_layer):
             if gnn_type == 'gin':
@@ -462,9 +540,33 @@ class GNN_node_Virtualnode(torch.nn.Module):
 
             self.batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
 
-        for layer in range(num_layer - 1):
-            self.mlp_virtualnode_list.append(torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.BatchNorm1d(2*emb_dim), torch.nn.ReLU(), \
-                                                    torch.nn.Linear(2*emb_dim, emb_dim), torch.nn.BatchNorm1d(emb_dim), torch.nn.ReLU()))
+        if not self.inter_message_passing:
+            ### List of MLPs to transform virtual node at every layer
+            self.mlp_virtualnode_list = torch.nn.ModuleList()
+
+            for layer in range(num_layer - 1):
+                self.mlp_virtualnode_list.append(torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.BatchNorm1d(2*emb_dim), torch.nn.ReLU(), \
+                                                        torch.nn.Linear(2*emb_dim, emb_dim), torch.nn.BatchNorm1d(emb_dim), torch.nn.ReLU()))
+        else:
+            # inter message passing with a junction tree
+            self.clique_encoder = torch.nn.Embedding(4, emb_dim)
+            self.clique_convs = torch.nn.ModuleList()
+            self.clique_batch_norms = torch.nn.ModuleList()
+
+            for layer in range(num_layer):
+                self.clique_convs.append(GINConvNoEdge(emb_dim))
+                self.clique_batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
+
+            self.atom2clique_lins = torch.nn.ModuleList()
+            self.clique2atom_lins = torch.nn.ModuleList()
+
+            for layer in range(num_layer):
+                self.atom2clique_lins.append(
+                    torch.nn.Linear(emb_dim, emb_dim))
+                self.clique2atom_lins.append(
+                    torch.nn.Linear(emb_dim, emb_dim))
+
+
 
 
     def forward(self, batched_data, x=None, edge_index=None, edge_attr=None, batch=None):
@@ -475,8 +577,12 @@ class GNN_node_Virtualnode(torch.nn.Module):
         if self.adj_dropout > 0:
             edge_index, edge_attr = dropout_adj(edge_index, edge_attr, p=self.adj_dropout, num_nodes=len(x), training=self.training)
 
-        ### virtual node embeddings for graphs
-        virtualnode_embedding = self.virtualnode_embedding(torch.zeros(batch[-1].item() + 1).to(edge_index.dtype).to(edge_index.device))
+        if not self.inter_message_passing:
+            ### virtual node embeddings for graphs
+            virtualnode_embedding = self.virtualnode_embedding(torch.zeros(batch[-1].item() + 1).to(edge_index.dtype).to(edge_index.device))
+        else:
+            x_clique = self.clique_encoder(batched_data.x_clique.squeeze())
+            
 
         if self.skip_atom_encoder:
             h_list = [x]
@@ -507,6 +613,33 @@ class GNN_node_Virtualnode(torch.nn.Module):
             h = self.batch_norms[self.num_layer - 1](h)
             h = F.dropout(h, p=self.drop_ratio, training=self.training)
             h_list[-1] = h
+
+        elif self.inter_message_passing:
+            
+            for layer in range(self.num_layer):
+                h = self.convs[layer](h_list[layer], edge_index, edge_attr)
+                h = self.batch_norms[layer](h)
+                h = F.dropout(F.relu(h), self.drop_ratio, training = self.training)
+                center_embedding = center_pool(h, batched_data.node_to_subgraph)
+
+                row, col = batched_data.atom2clique_index
+
+                x_clique = x_clique + F.relu(self.atom2clique_lins[layer](scatter(
+                    center_embedding[row], col, dim=0, dim_size=x_clique.size(0),
+                    reduce='mean')))
+
+                x_clique = self.clique_convs[layer](x_clique, batched_data.tree_edge_index)
+                x_clique = self.clique_batch_norms[layer](x_clique)
+                x_clique = F.relu(x_clique)
+                x_clique = F.dropout(x_clique, self.drop_ratio,
+                                     training=self.training)
+
+                x_clique_projection = F.relu(self.clique2atom_lins[layer](scatter(
+                    x_clique[col], row, dim=0, dim_size=batched_data.subgraph_to_graph.size(0),
+                    reduce='mean')))
+                h = center_pool_virtual(h, batched_data.node_to_subgraph, x_clique_projection)
+                h_list.append(h)
+
         else:
             for layer in range(self.num_layer):
                 ### add message from virtual nodes to graph nodes
@@ -545,6 +678,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
                     else:
                         virtualnode_embedding = F.dropout(self.mlp_virtualnode_list[layer](virtualnode_embedding_temp), self.drop_ratio, training = self.training)
 
+
+
         ### Different implementations of Jk-concat
         if self.JK == "last":
             node_representation = h_list[-1]
@@ -552,6 +687,9 @@ class GNN_node_Virtualnode(torch.nn.Module):
             node_representation = 0
             for layer in range(self.num_layer):
                 node_representation += h_list[layer]
+
+        if self.inter_message_passing:
+            return node_representation, x_clique
         
         return node_representation
 
