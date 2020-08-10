@@ -179,9 +179,10 @@ class GNN(torch.nn.Module):
             tree_batch = torch.repeat_interleave(data.num_cliques)
             x_clique = scatter(x_clique, tree_batch, dim=0, dim_size=x.size(0),
                                reduce='mean')
-            x_clique = F.dropout(x_clique, self.drop_ratio,
-                                 training=self.training)
-            x_clique = self.clique_lin(x_clique)
+            if self.use_atom_linear:
+                x_clique = F.dropout(x_clique, self.drop_ratio,
+                                     training=self.training)
+                x_clique = self.clique_lin(x_clique)
             x = x + x_clique
 
         if self.use_atom_linear:
