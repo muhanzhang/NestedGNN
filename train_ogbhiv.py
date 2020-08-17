@@ -34,6 +34,7 @@ parser.add_argument('--h', type=int, default=1, help='hop of enclosing subgraph'
 parser.add_argument('--use_hop_label', action='store_true', default=False, 
                     help='use one-hot encoding of which hop a node is included in \
                     the enclosing subgraph as additional node features')
+parser.add_argument('--use_resistance_distance', action='store_true', default=False)
 parser.add_argument('--save_appendix', type=str, default="",
                     help='appendix to save results')
 args = parser.parse_args()
@@ -56,7 +57,11 @@ if args.subgraph:
         path += '/sg_' + ''.join(str(h) for h in args.h)
     if args.use_hop_label:
         path += '_hoplabel'
-    pre_transform = lambda x: create_subgraphs(x, args.h, args.use_hop_label, one_hot=False)
+    if args.use_resistance_distance:
+        path += '_rd'
+    pre_transform = lambda x: create_subgraphs(
+        x, args.h, args.use_hop_label, one_hot=False, 
+        use_resistance_distance=args.use_resistance_distance)
 
 if args.subgraph:
     transform = Compose([JunctionTree(), pre_transform])
@@ -89,6 +94,7 @@ else:
                 dropout=args.dropout,
                 inter_message_passing=not args.no_inter_message_passing, 
                 use_hop_label=args.use_hop_label, 
+                use_resistance_distance=args.use_resistance_distance, 
                 num_tree_layers=args.num_tree_layers).to(device)
 
 

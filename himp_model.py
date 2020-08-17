@@ -4,6 +4,7 @@ from torch.nn import Embedding, ModuleList
 from torch.nn import Sequential, Linear, BatchNorm1d, ReLU
 from torch_scatter import scatter
 from torch_geometric.nn import GINConv, GINEConv
+from ogb_mol_gnn import center_pool, center_pool_virtual
 import pdb
 
 
@@ -57,14 +58,17 @@ class BondEncoder(torch.nn.Module):
 class NestedGNN(torch.nn.Module):
     def __init__(self, hidden_channels, out_channels, num_layers, dropout=0.0,
                  inter_message_passing=True, num_tree_layers=1, 
-                 use_hop_label=False):
+                 use_hop_label=False, use_resistance_distance=False):
         super(NestedGNN, self).__init__()
         self.num_layers = num_layers
         self.num_tree_layers = num_tree_layers
         self.dropout = dropout
         self.inter_message_passing = inter_message_passing
+        self.use_resistance_distance = use_resistance_distance
 
         self.atom_encoder = AtomEncoder(hidden_channels, use_hop_label)
+        if use_resistance_distance:
+            self.dense_projection = Linear(1, hidden_channels)
         self.clique_encoder = Embedding(4, hidden_channels)
 
         self.bond_encoders = ModuleList()
@@ -110,6 +114,8 @@ class NestedGNN(torch.nn.Module):
 
     def reset_parameters(self):
         self.atom_encoder.reset_parameters()
+        if self.use_resistance_distance:
+            self.dense_projection.reset_parameters()
         self.clique_encoder.reset_parameters()
 
         for emb, conv, batch_norm in zip(self.bond_encoders, self.atom_convs,
@@ -133,6 +139,8 @@ class NestedGNN(torch.nn.Module):
 
     def forward(self, data):
         x = self.atom_encoder(data.x.squeeze())
+        if self.use_resistance_distance:
+            x = x + self.dense_projection(data.rd)
 
         if self.inter_message_passing:
             x_clique = self.clique_encoder(data.x_clique.squeeze())
@@ -144,29 +152,27 @@ class NestedGNN(torch.nn.Module):
             x = F.relu(x)
             x = F.dropout(x, self.dropout, training=self.training)
 
-        x = scatter(x, data.node_to_subgraph, dim=0, reduce='mean')
-        x = F.dropout(x, self.dropout, training=self.training)
-        x = self.atom_lin(x)
+            if self.inter_message_passing:
+                center_embedding = center_pool(x, data.node_to_subgraph)
+                row, col = data.atom2clique_index
 
-        if self.inter_message_passing:
-            row, col = data.atom2clique_index
+                x_clique = x_clique + F.relu(self.atom2clique_lins[i](scatter(
+                    center_embedding[row], col, dim=0, dim_size=x_clique.size(0),
+                    reduce='mean')))
 
-            x_clique = x_clique + F.relu(self.atom2clique_lins[i](scatter(
-                x[row], col, dim=0, dim_size=x_clique.size(0),
-                reduce='mean')))
-
-            for i in range(self.num_tree_layers):
                 x_clique = self.clique_convs[i](x_clique, data.tree_edge_index)
                 x_clique = self.clique_batch_norms[i](x_clique)
                 x_clique = F.relu(x_clique)
                 x_clique = F.dropout(x_clique, self.dropout,
                                      training=self.training)
 
-            x = x + F.relu(self.clique2atom_lins[i](scatter(
-                x_clique[col], row, dim=0, dim_size=x.size(0),
-                reduce='mean')))
+                x_clique_projection = F.relu(self.clique2atom_lins[i](scatter(
+                    x_clique[col], row, dim=0, dim_size=center_embedding.size(0),
+                    reduce='mean')))
+                x = center_pool_virtual(x, data.node_to_subgraph, x_clique_projection)
 
-        x = scatter(x, data.subgraph_to_graph, dim=0, reduce='mean')
+        #x = scatter(x, data.subgraph_to_graph, dim=0, reduce='mean')
+        x = center_pool(x, data.subgraph_to_graph)
         x = F.dropout(x, self.dropout, training=self.training)
         x = self.atom_lin(x)
 
