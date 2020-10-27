@@ -191,6 +191,8 @@ if args.use_junction_tree:
 dataset = PygGraphPropPredDataset(
     name=args.dataset, root=path, pre_transform=pre_transform, 
     skip_collate=args.multiple_h is not None)
+if args.dataset == 'ogbg-molpcba':
+    dataset.eval_metric = 'ap'
 
 if False:  # visualize some graphs
     import networkx as nx
