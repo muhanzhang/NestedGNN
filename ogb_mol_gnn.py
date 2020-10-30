@@ -133,11 +133,11 @@ class GNN(torch.nn.Module):
             self.atom_lin = torch.nn.Linear(emb_dim, emb_dim)
 
 
-    def forward(self, data):
+    def forward(self, data, perturb=None):
         if self.inter_message_passing:
-            x, x_clique = self.gnn_node(data)
+            x, x_clique = self.gnn_node(data, perturb=perturb)
         else:
-            x = self.gnn_node(data)
+            x = self.gnn_node(data, perturb=perturb)
 
         if 'node_to_subgraph' in data and 'subgraph_to_graph' in data:
             x = self.subpool(x, data.node_to_subgraph)
@@ -261,11 +261,11 @@ class NestedGNN(torch.nn.Module):
             self.subpool = None
 
 
-    def forward(self, data_multi_hop):
+    def forward(self, data_multi_hop, perturb=None):
         x_multi_hop = []
         for i, h in enumerate(self.hs):
             data = data_multi_hop[h]
-            x = self.gnn_node[i](data)
+            x = self.gnn_node[i](data, perturb=perturb)
 
             if 'node_to_subgraph' in data and 'subgraph_to_graph' in data:
                 x = self.subpool(x, data.node_to_subgraph)
@@ -449,7 +449,7 @@ class GNN_node(torch.nn.Module):
                 
             self.batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
 
-    def forward(self, batched_data, x=None, edge_index=None, edge_attr=None, batch=None):
+    def forward(self, batched_data, x=None, edge_index=None, edge_attr=None, batch=None, perturb=None):
 
         if batched_data is not None:
             x, edge_index, edge_attr, batch = batched_data.x, batched_data.edge_index, batched_data.edge_attr, batched_data.batch
@@ -459,6 +459,9 @@ class GNN_node(torch.nn.Module):
             h_list = [self.atom_encoder(x) + self.dense_projection(batched_data.rd)]
         else:
             h_list = [self.atom_encoder(x)]
+
+        if perturb is not None:
+            h_list[0] = h_list[0] + perturb
 
         for layer in range(self.num_layer):
 
@@ -570,7 +573,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
 
 
 
-    def forward(self, batched_data, x=None, edge_index=None, edge_attr=None, batch=None):
+    def forward(self, batched_data, x=None, edge_index=None, edge_attr=None, batch=None, perturb=None):
 
         if batched_data is not None:
             x, edge_index, edge_attr, batch = batched_data.x, batched_data.edge_index, batched_data.edge_attr, batched_data.batch
@@ -592,6 +595,9 @@ class GNN_node_Virtualnode(torch.nn.Module):
                 h_list = [self.atom_encoder(x) + self.dense_projection(batched_data.rd)]
             else:
                 h_list = [self.atom_encoder(x)]
+
+        if perturb is not None:
+            h_list[0] = h_list[0] + perturb
 
         if self.residual_plus:
             h_list[0] = h_list[0] + virtualnode_embedding[batch]

@@ -1,1 +1,2 @@
 # NestedGNN
+install rdkit

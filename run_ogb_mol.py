@@ -13,12 +13,13 @@ from torch_geometric.transforms import Compose
 
 ### importing OGB
 from ogb.graphproppred import Evaluator
-from dataset_pyg import PygGraphPropPredDataset  # customized to support pre_transform
+from dataset_pyg import PygGraphPropPredDataset  # customized to support data list
 
 from dataloader import DataLoader  # use a custom dataloader to handle subgraphs
 from utils import create_subgraphs
 
 from himp_transform import JunctionTree
+from attacks import *
 
 cls_criterion = torch.nn.BCEWithLogitsLoss()
 reg_criterion = torch.nn.MSELoss()
@@ -37,20 +38,31 @@ def train(model, device, loader, optimizer, task_type):
         if skip_epoch:
             pass
         else:
-            pred = model(batch)
-            optimizer.zero_grad()
-            ## ignore nan targets (unlabeled) when computing training loss.
+            if "classification" in task_type: 
+                train_criterion = cls_criterion
+            else:
+                train_criterion = reg_criterion
+
             if args.multiple_h is not None:
                 y = batch[args.h[0]].y
             else:
                 y = batch.y
             is_labeled = y == y
-            if "classification" in task_type: 
-                loss = cls_criterion(pred.to(torch.float32)[is_labeled], y.to(torch.float32)[is_labeled])
-            else:
-                loss = reg_criterion(pred.to(torch.float32)[is_labeled], y.to(torch.float32)[is_labeled])
-            loss.backward()
-            optimizer.step()
+
+            if args.attack is None:
+                pred = model(batch)
+                optimizer.zero_grad()
+                ## ignore nan targets (unlabeled) when computing training loss.
+                loss = train_criterion(pred.to(torch.float32)[is_labeled], y.to(torch.float32)[is_labeled])
+                loss.backward()
+                optimizer.step()
+            elif args.attack == 'flag':
+                forward = lambda perturb : model(batch, perturb).to(torch.float32)[is_labeled]
+                model_forward = (model, forward)
+                y = y.to(torch.float32)[is_labeled]
+                perturb_shape = (batch.x.shape[0], args.emb_dim)
+                loss, _ = flag(model_forward, perturb_shape, y, args, optimizer, device, train_criterion)
+
 
 def eval(model, device, loader, evaluator):
     model.eval()
@@ -147,6 +159,10 @@ parser.add_argument('--scheduler', action='store_true', default=False,
 parser.add_argument('--seed', type=int, default=1)
 parser.add_argument('--save_appendix', type=str, default="",
                     help='appendix to save results')
+# FLAG settings
+parser.add_argument('--attack', type=str, default=None, help='flag')
+parser.add_argument('--step_size', type=float, default=1e-3)
+parser.add_argument('-m', type=int, default=3)
 args = parser.parse_args()
 
 torch.manual_seed(args.seed)
