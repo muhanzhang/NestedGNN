@@ -11,10 +11,11 @@ from torch_geometric.data import Data
 from torch_geometric.utils import to_scipy_sparse_matrix
 from torch_scatter import scatter_min
 from batch import Batch
+from collections import defaultdict
 
 
-def create_subgraphs(data, h=1, use_hop_label=False, one_hot=True, sample_ratio=1.0, 
-    max_nodes_per_hop=None, use_resistance_distance=False):
+def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
+                     node_label='hop'):
     # Given a PyG graph data, extract an h-hop enclosing subgraph for each of its
     # nodes, and combine these node-subgraphs into a new large disconnected graph
 
@@ -27,41 +28,25 @@ def create_subgraphs(data, h=1, use_hop_label=False, one_hot=True, sample_ratio=
     for h_ in h:
         subgraphs = []
         for ind in range(num_nodes):
-            if use_hop_label:
-                nodes_, edge_index_, edge_mask_, hop_label = k_hop_subgraph(
-                    ind, h_, edge_index, True, num_nodes, return_hop=True
-                )
-            else:
-                nodes_, edge_index_, edge_mask_ = k_hop_subgraph(
-                    ind, h_, edge_index, True, num_nodes
-                )
+            nodes_, edge_index_, edge_mask_, z_ = k_hop_subgraph(
+                ind, h_, edge_index, True, num_nodes, node_label=node_label 
+            )
             x_ = None
             edge_attr_ = None
             pos_ = None
             if x is not None:
                 x_ = x[nodes_]
-            if use_hop_label:
-                if one_hot:
-                    hop_label = F.one_hot(hop_label, h_ + 1).type_as(x_)
-                else:
-                    if x_ is not None:
-                        hop_label = hop_label.unsqueeze(1).type_as(x_)
-                    else:
-                        hop_label = hop_label.unsqueeze(1).type(torch.long)
-                if x_ is not None:
-                    x_ = torch.cat([hop_label, x_], 1)
-                else:
-                    x_ = hop_label
+            else:
+                x_ = None
 
             if data.edge_attr is not None:
                 edge_attr_ = data.edge_attr[edge_mask_]
             if data.pos is not None:
                 pos_ = data.pos[nodes_]
-            #data_ = Data(x_, edge_index_, edge_attr_, None, pos_)
-            data_ = data.__class__(x_, edge_index_, edge_attr_, None, pos_)
+            data_ = data.__class__(x_, edge_index_, edge_attr_, None, pos_, z=z_)
             data_.num_nodes = nodes_.shape[0]
 
-            if use_resistance_distance:
+            if node_label == 'rd':
                 adj = to_scipy_sparse_matrix(edge_index_, num_nodes=nodes_.shape[0]).tocsr()
                 laplacian = ssp.csgraph.laplacian(adj).toarray()
                 L_inv = linalg.pinv(laplacian)
@@ -70,7 +55,7 @@ def create_subgraphs(data, h=1, use_hop_label=False, one_hot=True, sample_ratio=
                 lxy = L_inv[0, :]
                 lyx = L_inv[:, 0]
                 rd_to_x = torch.FloatTensor((lxx + lyy - lxy - lyx)).unsqueeze(1)
-                data_.rd = rd_to_x
+                data_.z = rd_to_x
 
             subgraphs.append(data_)
 
@@ -93,7 +78,7 @@ def create_subgraphs(data, h=1, use_hop_label=False, one_hot=True, sample_ratio=
         
         # copy remaining graph attributes
         for k, v in data:
-            if k not in ['x', 'edge_index', 'edge_attr', 'pos', 'num_nodes', 'batch']:
+            if k not in ['x', 'edge_index', 'edge_attr', 'pos', 'num_nodes', 'batch', 'z']:
                 new_data[k] = v
         
 
@@ -106,6 +91,92 @@ def create_subgraphs(data, h=1, use_hop_label=False, one_hot=True, sample_ratio=
 
 
 def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
+                   num_nodes=None, flow='source_to_target', node_label='hop'):
+
+    num_nodes = maybe_num_nodes(edge_index, num_nodes)
+
+    assert flow in ['source_to_target', 'target_to_source']
+    if flow == 'target_to_source':
+        row, col = edge_index
+    else:
+        col, row = edge_index
+
+    node_mask = row.new_empty(num_nodes, dtype=torch.bool)
+    edge_mask = row.new_empty(row.size(0), dtype=torch.bool)
+
+    subsets = [torch.tensor([node_idx], device=row.device).flatten()]
+    visited = set(subsets[-1].tolist())
+    label = defaultdict(list)
+    for node in subsets[-1].tolist():
+        label[node].append(1)
+    if node_label == 'hop':
+        hops = [torch.LongTensor([0], device=row.device).flatten()]
+    for h in range(num_hops):
+        node_mask.fill_(False)
+        node_mask[subsets[-1]] = True
+        torch.index_select(node_mask, 0, row, out=edge_mask)
+        new_nodes = col[edge_mask]
+        tmp = []
+        for node in new_nodes.tolist():
+            if node in visited:
+                continue
+            tmp.append(node)
+            label[node].append(h+2)
+        if len(tmp) == 0:
+            break
+        new_nodes = set(tmp)
+        visited = visited.union(new_nodes)
+        new_nodes = torch.tensor(list(new_nodes), device=row.device)
+        subsets.append(new_nodes)
+        if node_label == 'hop':
+            hops.append(torch.LongTensor([h+1] * len(new_nodes), device=row.device))
+    subset = torch.cat(subsets)
+    inverse_map = torch.tensor(range(subset.shape[0]))
+    if node_label == 'hop':
+        hop = torch.cat(hops)
+    # Add `node_idx` to the beginning of `subset`.
+    subset = subset[subset != node_idx]
+    subset = torch.cat([torch.tensor([node_idx], device=row.device), subset])
+
+    z = None
+    if node_label == 'hop':
+        hop = hop[hop != 0]
+        hop = torch.cat([torch.LongTensor([0], device=row.device), hop])
+        z = hop.unsqueeze(1)
+    else:
+        if node_label == 'spd':
+            z = torch.zeros([subset.size(0), 2], dtype=torch.long, device=row.device)
+        elif node_label == 'drnl':
+            z = torch.zeros([subset.size(0), 1], dtype=torch.long, device=row.device)
+
+        for i, node in enumerate(subset.tolist()):
+            dists = label[node][:num_distances]
+            if node_label == 'spd':
+                z[i][:min(num_distances, len(dists))] = torch.tensor(dists)
+            elif node_label == 'drnl':
+                dist1 = dists[0]
+                dist2 = dists[1] if len(dists) == 2 else 0
+                if dist2 == 0:
+                    dist = dist1
+                else:
+                    dist = dist1 * (num_hops + 1) + dist2
+                z[i][0] = dist
+        
+    node_mask.fill_(False)
+    node_mask[subset] = True
+    edge_mask = node_mask[row] & node_mask[col]
+
+    edge_index = edge_index[:, edge_mask]
+
+    if relabel_nodes:
+        node_idx = row.new_full((num_nodes, ), -1)
+        node_idx[subset] = torch.arange(subset.size(0), device=row.device)
+        edge_index = node_idx[edge_index]
+
+    return subset, edge_index, edge_mask, z
+
+
+def k_hop_subgraph_old(node_idx, num_hops, edge_index, relabel_nodes=False,
                    num_nodes=None, flow='source_to_target', return_hop=False):
     r"""Computes the :math:`k`-hop subgraph of :obj:`edge_index` around node
     :attr:`node_idx`.
@@ -179,7 +250,7 @@ def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
 
 
 # Copied from master PyG
-def k_hop_subgraph_old(node_idx, num_hops, edge_index, relabel_nodes=False,
+def k_hop_subgraph_old2(node_idx, num_hops, edge_index, relabel_nodes=False,
                    num_nodes=None, flow='source_to_target'):
     r"""Computes the :math:`k`-hop subgraph of :obj:`edge_index` around node
     :attr:`node_idx`.
