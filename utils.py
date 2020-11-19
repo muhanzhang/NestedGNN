@@ -15,7 +15,7 @@ from collections import defaultdict
 
 
 def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
-                     node_label='hop'):
+                     node_label='hop', use_rd=False):
     # Given a PyG graph data, extract an h-hop enclosing subgraph for each of its
     # nodes, and combine these node-subgraphs into a new large disconnected graph
 
@@ -46,7 +46,7 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
             data_ = data.__class__(x_, edge_index_, edge_attr_, None, pos_, z=z_)
             data_.num_nodes = nodes_.shape[0]
 
-            if node_label == 'rd':
+            if use_rd:
                 adj = to_scipy_sparse_matrix(edge_index_, num_nodes=nodes_.shape[0]).tocsr()
                 laplacian = ssp.csgraph.laplacian(adj).toarray()
                 L_inv = linalg.pinv(laplacian)
@@ -55,7 +55,7 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
                 lxy = L_inv[0, :]
                 lyx = L_inv[:, 0]
                 rd_to_x = torch.FloatTensor((lxx + lyy - lxy - lyx)).unsqueeze(1)
-                data_.z = rd_to_x
+                data_.rd = rd_to_x
 
             subgraphs.append(data_)
 
@@ -78,9 +78,9 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
         
         # copy remaining graph attributes
         for k, v in data:
-            if k not in ['x', 'edge_index', 'edge_attr', 'pos', 'num_nodes', 'batch', 'z']:
+            if k not in ['x', 'edge_index', 'edge_attr', 'pos', 'num_nodes', 'batch',
+                         'z', 'rd']:
                 new_data[k] = v
-        
 
         if len(h) == 1:
             return new_data
@@ -150,9 +150,9 @@ def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
             z = torch.zeros([subset.size(0), 1], dtype=torch.long, device=row.device)
 
         for i, node in enumerate(subset.tolist()):
-            dists = label[node][:num_distances]
+            dists = label[node][:2]  # keep top-2 distances
             if node_label == 'spd':
-                z[i][:min(num_distances, len(dists))] = torch.tensor(dists)
+                z[i][:min(2, len(dists))] = torch.tensor(dists)
             elif node_label == 'drnl':
                 dist1 = dists[0]
                 dist2 = dists[1] if len(dists) == 2 else 0

@@ -461,14 +461,10 @@ class GNN_node(torch.nn.Module):
         ### computing input node embedding
         if self.node_label == 'rd':
             z_emb = self.z_projection(batched_data.z)
-        elif self.node_label == 'hop':
-            z_emb = self.z_embedding(batched_data.z)
-        elif self.node_label == 'spd':
-            z_emb = self.z_embedding(batched_data.z)
-            if z_emb.ndim == 3:
-                z_emb = z_emb.sum(dim=1)
         else:
-            z_emb = 0
+            z_emb = self.z_embedding(batched_data.z)
+        if z_emb.ndim == 3:
+            z_emb = z_emb.sum(dim=1)
         h_list = [self.atom_encoder(x) + z_emb]
 
         if perturb is not None:
@@ -508,14 +504,14 @@ class GNN_node_Virtualnode(torch.nn.Module):
         node representations
     """
     def __init__(self, num_layer, emb_dim, drop_ratio=0.5, JK="last", residual=False, 
-                 gnn_type='gin', node_label='hop', adj_dropout=0, 
+                 gnn_type='gin', node_label='hop', use_rd=False, adj_dropout=0, 
                  skip_atom_encoder=False, residual_plus=False, 
                  center_pool_virtual=False, inter_message_passing=False, 
                  concat_z_embedding=False):
         '''
             emb_dim (int): node embedding dimensionality
             num_layer (int): number of GNN message passing layers
-            node_label (str): node label scheme; supports 'hop', 'rd' (resistance distance), 
+            node_label (str): node label scheme; supports 'hop', 'drnl'
                               'spd' (shortest path distances)
         '''
 
@@ -527,6 +523,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
         self.residual = residual
 
         self.node_label = node_label
+        self.use_rd = use_rd
         self.adj_dropout = adj_dropout
         self.residual_plus = residual_plus
         self.center_pool_virtual = center_pool_virtual
@@ -538,7 +535,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
             x_emb_dim = emb_dim - z_emb_dim
         else:
             z_emb_dim, x_emb_dim = emb_dim, emb_dim
-        if node_label == 'rd':
+        if use_rd:
             self.z_projection = torch.nn.Linear(1, z_emb_dim)
         else:
             self.z_embedding = torch.nn.Embedding(1000, z_emb_dim)
@@ -597,8 +594,6 @@ class GNN_node_Virtualnode(torch.nn.Module):
                     torch.nn.Linear(emb_dim, emb_dim))
 
 
-
-
     def forward(self, batched_data, x=None, edge_index=None, edge_attr=None, batch=None, perturb=None):
 
         if batched_data is not None:
@@ -616,21 +611,20 @@ class GNN_node_Virtualnode(torch.nn.Module):
 
         if self.skip_atom_encoder:
             h_list = [x]
-        else:
+        elif 'z' in batched_data:
             ### computing input node embedding
-            if self.node_label == 'rd':
-                z_emb = self.z_projection(batched_data.z)
-            elif self.node_label == 'hop':
-                z_emb = self.z_embedding(batched_data.z)
-            elif self.node_label == 'spd':
-                z_emb = self.z_embedding(batched_data.z)
+            z_emb = self.z_embedding(batched_data.z)
+            if z_emb.ndim == 3:
                 z_emb = z_emb.sum(dim=1)
-            else:
-                z_emb = 0
+            if self.use_rd:
+                z_proj = self.z_projection(batched_data.rd)
+                z_emb = z_emb + z_proj
             if self.concat_z_embedding:
                 h_list = [torch.cat([z_emb, self.atom_encoder(x)], -1)]
             else:
                 h_list = [self.atom_encoder(x) + z_emb]
+        else:
+            h_list = [self.atom_encoder(x)]
 
         if perturb is not None:
             h_list[0] = h_list[0] + perturb

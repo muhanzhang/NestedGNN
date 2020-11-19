@@ -166,7 +166,7 @@ class PygGraphPropPredDataset(InMemoryDataset):
 
         if self.pre_transform is not None:
             new_data_list = []
-            for data in tqdm(data_list):
+            for data in tqdm(data_list, ncols=70):
                 new_data_list.append(self.pre_transform(data))
             del data_list
             data_list = new_data_list

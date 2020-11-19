@@ -10,7 +10,14 @@ import pdb
 import argparse
 import time
 import numpy as np
+import networkx as nx
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
 from torch_geometric.transforms import Compose
+from torch_geometric.utils import to_networkx
+from torch_geometric.data import DataListLoader
 
 ### importing OGB
 from ogb.graphproppred import Evaluator
@@ -22,13 +29,14 @@ from utils import create_subgraphs
 from himp_transform import JunctionTree
 from attacks import *
 
-cls_criterion = torch.nn.BCEWithLogitsLoss()
-reg_criterion = torch.nn.MSELoss()
+cls_criterion = torch.nn.BCEWithLogitsLoss
+reg_criterion = torch.nn.MSELoss
 
 def train(model, device, loader, optimizer, task_type):
     model.train()
 
-    for step, batch in enumerate(tqdm(loader, desc="Iteration")):
+    total_loss = 0
+    for step, batch in enumerate(tqdm(loader, desc="Iteration", ncols=70)):
         if type(batch) == dict:
             batch = {key: data_.to(device) for key, data_ in batch.items()}
             skip_epoch = (batch[args.h[0]].x.shape[0] == 1 or 
@@ -55,8 +63,8 @@ def train(model, device, loader, optimizer, task_type):
             pred = model(batch)
             optimizer.zero_grad()
             ## ignore nan targets (unlabeled) when computing training loss.
-            loss = train_criterion(pred.to(torch.float32)[is_labeled], 
-                                   y.to(torch.float32)[is_labeled])
+            loss = train_criterion()(pred.to(torch.float32)[is_labeled], 
+                                     y.to(torch.float32)[is_labeled])
             loss.backward()
             optimizer.step()
         elif args.attack == 'flag':
@@ -65,15 +73,18 @@ def train(model, device, loader, optimizer, task_type):
             y = y.to(torch.float32)[is_labeled]
             perturb_shape = (batch.x.shape[0], args.emb_dim)
             loss, _ = flag(model_forward, perturb_shape, y, args, optimizer, 
-                           device, train_criterion)
+                           device, train_criterion())
+        total_loss += loss.item() * y.shape[0]
+    return total_loss / len(loader.dataset)
 
 
-def eval(model, device, loader, evaluator):
+def eval(model, device, loader, evaluator, return_loss=False, task_type=None):
     model.eval()
     y_true = []
     y_pred = []
+    y_loss = []
 
-    for step, batch in enumerate(tqdm(loader, desc="Iteration")):
+    for step, batch in enumerate(tqdm(loader, desc="Iteration", ncols=70)):
         if type(batch) == dict:
             batch = {key: data_.to(device) for key, data_ in batch.items()}
             skip_epoch = batch[args.h[0]].x.shape[0] == 1
@@ -94,16 +105,72 @@ def eval(model, device, loader, evaluator):
             y_true.append(y.view(pred.shape).detach().cpu())
             y_pred.append(pred.detach().cpu())
 
-    y_true = torch.cat(y_true, dim = 0).numpy()
-    y_pred = torch.cat(y_pred, dim = 0).numpy()
+        if return_loss:
+            if "classification" in task_type: 
+                train_criterion = cls_criterion
+            else:
+                train_criterion = reg_criterion
+            loss = train_criterion(reduction='none')(pred.to(torch.float32), 
+                                                     y.to(torch.float32))
+            loss[torch.isnan(loss)] = 0
+            y_loss.append(loss.sum(1).cpu())
+    
+    if return_loss:
+        y_loss = torch.cat(y_loss, dim=0).numpy()
+        return y_loss
 
+    y_true = torch.cat(y_true, dim=0).numpy()
+    y_pred = torch.cat(y_pred, dim=0).numpy()
     input_dict = {"y_true": y_true, "y_pred": y_pred}
+    res = evaluator.eval(input_dict)
+    return res
 
-    return evaluator.eval(input_dict)
+
+def visualize(dataset, save_path, name='vis', number=20, loss=None, sort=True):
+    if loss is not None:
+        assert(len(loss) == len(dataset))
+        if sort:
+            order = np.argsort(loss.flatten()).tolist()
+        else:
+            order = list(range(len(loss.flatten())))
+        loader = [dataset.get(i) for i in order[-number:][::-1]]
+        #loss = [loss[i] for i in order[::-1]]
+        loss = [loss[i] for i in order]
+    else:
+        loader = DataLoader(dataset, batch_size=1, shuffle=False)
+    for idx, data in enumerate(loader):
+        f = plt.figure(figsize=(20, 20))
+        limits = plt.axis('off')
+        if 'name' in data.keys:
+            del data.name
+        if args.h is not None:
+            node_size = 150
+            with_labels = True
+            G = to_networkx(data, node_attrs=['z'])
+            labels = {i: G.nodes[i]['z'] for i in range(len(G))}
+        else:
+            node_size = 300
+            with_labels = True
+            data.x = data.x[:, 0]
+            G = to_networkx(data, node_attrs=['x'])
+            labels = {i: G.nodes[i]['x'] for i in range(len(G))}
+        if loss is not None:
+            label = 'Loss = ' + str(loss[idx])
+            print(label)
+        else:
+            label = ''
+
+        nx.draw_networkx(G, node_size=node_size, arrows=True, with_labels=with_labels,
+                         labels=labels)
+        plt.title(label)
+        f.savefig(os.path.join(save_path, f'{name}_{idx}.png'))
+        if (idx+1) % 5 == 0:
+            pdb.set_trace()
 
 
 # Training settings
 parser = argparse.ArgumentParser(description='Nested GNN')
+parser.add_argument('--runs', type=int, default=1)
 parser.add_argument('--gnn', type=str, default='gin-virtual',
                     help='GNN gin, gin-virtual, or gcn, or gcn-virtual')
 parser.add_argument('--residual', action='store_true', default=False, 
@@ -117,7 +184,9 @@ parser.add_argument('--multiple_h', type=str, default=None,
                     "2,3", which will overwrite h with a list [2, 3]')
 parser.add_argument('--node_label', type=str, default='hop', 
                     help='apply labeling trick to nodes within each subgraph, use node\
-                    labels as additional node features; support "hop", "rd", "spd"')
+                    labels as additional node features; support "hop", "drnl", "spd"')
+parser.add_argument('--use_rd', action='store_true', default=False, 
+                    help='use resistance distance as additional node labels')
 parser.add_argument('--concat_z_embedding', action='store_true', default=False)
 parser.add_argument('--use_junction_tree', action='store_true', default=False)
 parser.add_argument('--inter_message_passing', action='store_true', default=False)
@@ -154,23 +223,23 @@ parser.add_argument('--feature', type=str, default="full",
                     help='full feature or simple feature')
 parser.add_argument('--scheduler', action='store_true', default=False, 
                     help='use a scheduler to reduce learning rate')
-parser.add_argument('--seed', type=int, default=1)
 parser.add_argument('--save_appendix', type=str, default='',
                     help='appendix to save results')
+parser.add_argument('--log_steps', type=int, default=10)
+parser.add_argument('--continue_from', type=int, default=None, 
+                    help="from which epoch's checkpoint to continue training")
+parser.add_argument('--visualize_all', action='store_true', default=False, 
+                    help='visualize all graphs in dataset sequentially')
+parser.add_argument('--visualize_test', action='store_true', default=False, 
+                    help='visualize test graphs by loss')
+parser.add_argument('--pre_visualize', action='store_true', default=False)
 # FLAG settings
 parser.add_argument('--attack', type=str, default=None, help='flag')
 parser.add_argument('--step_size', type=float, default=1e-3)
 parser.add_argument('--m', type=int, default=3)
 args = parser.parse_args()
 
-torch.manual_seed(args.seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed(args.seed)
-random.seed(args.seed)
-np.random.seed(args.seed)
-
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
-
 
 if args.save_appendix == '':
     args.save_appendix = '_' + time.strftime("%Y%m%d%H%M%S")
@@ -207,8 +276,11 @@ if args.h is not None:
     elif type(args.h) == list:
         path += '/ngnn_h' + ''.join(str(h) for h in args.h)
     path += '_' + args.node_label
+    if args.use_rd:
+        path += '_rd'
     def pre_transform(g):
-        return create_subgraphs(g, args.h, node_label=args.node_label)
+        return create_subgraphs(g, args.h, node_label=args.node_label, 
+                                use_rd=args.use_rd)
 
 if args.use_junction_tree:
     path += '_jt'
@@ -222,36 +294,6 @@ if args.use_junction_tree:
 dataset = PygGraphPropPredDataset(
     name=args.dataset, root=path, pre_transform=pre_transform, 
     skip_collate=args.multiple_h is not None)
-
-if False:  # visualize some graphs
-    import networkx as nx
-    from torch_geometric.utils import to_networkx
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    loader = DataLoader(dataset, batch_size=1, shuffle=False)
-    for data in loader:
-        f = plt.figure(figsize=(20, 20))
-        limits = plt.axis('off')
-        data = data.to(device)
-        if 'name' in data.keys:
-            del data.name
-        if args.h is not None:
-            node_size = 100
-            with_labels = True
-            G = to_networkx(data, node_attrs=['z'])
-            labels = {i: G.nodes[i]['z'] for i in range(len(G))}
-        else:
-            node_size = 300
-            with_labels = True
-            data.x = data.x[:, 0]
-            G = to_networkx(data, node_attrs=['x'])
-            labels = {i: G.nodes[i]['x'] for i in range(len(G))}
-
-        nx.draw(G, node_size=node_size, arrows=True, with_labels=with_labels,
-                labels=labels)
-        f.savefig('tmp_vis.png')
-        pdb.set_trace()
 
 if args.feature == 'full':
     pass 
@@ -273,9 +315,13 @@ valid_loader = DataLoader(dataset[split_idx["valid"]], batch_size=args.batch_siz
                           shuffle=False, num_workers = args.num_workers)
 test_loader = DataLoader(dataset[split_idx["test"]], batch_size=args.batch_size, 
                          shuffle=False, num_workers = args.num_workers)
+    
+if args.pre_visualize:
+    visualize(dataset, args.res_dir)
 
 kwargs = {
         'node_label': args.node_label, 
+        'use_rd': args.use_rd, 
         'adj_dropout': args.adj_dropout, 
         'graph_pooling': args.graph_pooling, 
         "subgraph_pooling": args.subgraph_pooling, 
@@ -306,56 +352,105 @@ if args.gnn.endswith('virtual'):
 else:
     virtual_node = False
 
-model = GNN(gnn_type=gnn_type, num_tasks=dataset.num_tasks, emb_dim=args.emb_dim, 
-            drop_ratio=args.drop_ratio, virtual_node=virtual_node, **kwargs).to(device)
+valid_perfs, test_perfs = [], []
+for run in range(args.runs):
+    model = GNN(gnn_type=gnn_type, num_tasks=dataset.num_tasks, emb_dim=args.emb_dim, 
+                drop_ratio=args.drop_ratio, virtual_node=virtual_node, 
+                **kwargs).to(device)
 
-optimizer = optim.Adam(model.parameters(), lr=args.lr)
-if args.scheduler:
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, 
-                                                gamma=args.lr_decay_factor)
-
-# Training begins.
-eval_metric = dataset.eval_metric
-best_valid_perf = -1E6 if 'classification' in dataset.task_type else 1E6
-for epoch in range(1, args.epochs + 1):
-    print("=====Epoch {}, save_appendix {}".format(epoch, args.save_appendix))
-    print('Training...')
-    train(model, device, train_loader, optimizer, dataset.task_type)
-
-    print('Evaluating...')
-    valid_perf = eval(model, device, valid_loader, evaluator)[eval_metric]
-    if 'classification' in dataset.task_type:
-        if valid_perf > best_valid_perf:
-            best_valid_perf = valid_perf
-            best_test_perf = eval(model, device, test_loader, evaluator)[eval_metric]
-            best_train_perf = eval(model, device, train_loader, evaluator)[eval_metric]
-    else:
-        if valid_perf < best_valid_perf:
-            best_valid_perf = valid_perf
-            best_test_perf = eval(model, device, test_loader, evaluator)[eval_metric]
-            best_train_perf = eval(model, device, train_loader, evaluator)[eval_metric]
-    
+    optimizer = optim.Adam(model.parameters(), lr=args.lr)
     if args.scheduler:
-        scheduler.step()
+        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, 
+                                                    gamma=args.lr_decay_factor)
+    start_epoch = 1
+    if args.continue_from is not None:
+        model.load_state_dict(
+            torch.load(os.path.join(args.res_dir, 
+                'model_checkpoint{}.pth'.format(args.continue_from)))
+        )
+        optimizer.load_state_dict(
+            torch.load(os.path.join(args.res_dir, 
+                'optimizer_checkpoint{}.pth'.format(args.continue_from)))
+        )
+        start_epoch = args.continue_from + 1
+        args.epochs -= args.continue_from
 
-    res = {'Cur Val': valid_perf, 'Best Val': best_valid_perf, 
-           'Best Train': best_train_perf, 'Best Test': best_test_perf}
-    print(res)
+    if args.visualize_all:  # visualize all graphs
+        model.load_state_dict(torch.load(os.path.join(args.res_dir, 'best_model.pth')))
+        dataset = dataset[:100]
+        loader = DataLoader(dataset, batch_size=32, shuffle=False)
+        all_losses = eval(model, device, loader, evaluator, True, 
+                           dataset.task_type).flatten()
+        visualize(dataset, args.res_dir, 'all_vis', loss=all_losses, sort=False)
+
+    if args.visualize_test:
+        model.load_state_dict(torch.load(os.path.join(args.res_dir, 'best_model.pth')))
+        test_losses = eval(model, device, test_loader, evaluator, True, 
+                           dataset.task_type).flatten()
+        visualize(dataset[split_idx["test"]], args.res_dir, 'test_vis', loss=test_losses)
+
+    # Training begins.
+    eval_metric = dataset.eval_metric
+    best_valid_perf = -1E6 if 'classification' in dataset.task_type else 1E6
+    for epoch in range(start_epoch, start_epoch + args.epochs):
+        print(f"=====Run {run}, epoch {epoch}, {args.save_appendix}")
+        print('Training...')
+        loss = train(model, device, train_loader, optimizer, dataset.task_type)
+
+        print('Evaluating...')
+        valid_perf = eval(model, device, valid_loader, evaluator)[eval_metric]
+        if 'classification' in dataset.task_type:
+            if valid_perf > best_valid_perf:
+                best_valid_perf = valid_perf
+                best_test_perf = eval(model, device, test_loader, 
+                                      evaluator)[eval_metric]
+                torch.save(model.state_dict(), 
+                           os.path.join(args.res_dir, 'best_model.pth'))
+        else:
+            if valid_perf < best_valid_perf:
+                best_valid_perf = valid_perf
+                best_test_perf = eval(model, device, test_loader, 
+                                      evaluator)[eval_metric]
+                torch.save(model.state_dict(), 
+                           os.path.join(args.res_dir, 'best_model.pth'))
+        if args.scheduler:
+            scheduler.step()
+
+        res = {'Epoch': epoch, 'Loss': loss, 'Cur Val': valid_perf, 
+               'Best Val': best_valid_perf, 'Best Test': best_test_perf}
+        print(res)
+        with open(log_file, 'a') as f:
+            print(res, file=f)
+
+        if epoch % args.log_steps == 0:
+            model_name = os.path.join(
+                args.res_dir, 'model_checkpoint{}.pth'.format(epoch))
+            optimizer_name = os.path.join(
+                args.res_dir, 'optimizer_checkpoint{}.pth'.format(epoch))
+            torch.save(model.state_dict(), model_name)
+            torch.save(optimizer.state_dict(), optimizer_name)
+
+    final_res = '''Run {}\nBest validation score: {}\nTest score: {}
+    '''.format(run, best_valid_perf, best_test_perf)
+    print('Finished training!')
+    cmd_input = 'python ' + ' '.join(sys.argv)
+    print(cmd_input)
+    print(final_res)
     with open(log_file, 'a') as f:
-        print(res, file=f)
+        print(final_res, file=f)
 
-final_res = '''Seed {}
-Best validation score: {}
-Train score: {}
-Test score: {}
-'''.format(args.seed, best_valid_perf, best_train_perf, best_test_perf)
-print('Finished training!')
-cmd_input = 'python ' + ' '.join(sys.argv)
+    valid_perfs.append(best_valid_perf)
+    test_perfs.append(best_test_perf)
+
+valid_perfs = torch.tensor(valid_perfs)
+test_perfs = torch.tensor(test_perfs)
+print('===========================')
 print(cmd_input)
-print(final_res)
-with open(log_file, 'a') as f:
-    print(final_res, file=f)
-    
+print(f'Final Valid: {valid_perfs.mean():.4f} ± {valid_perfs.std():.4f}')
+print(f'Final Test: {test_perfs.mean():.4f} ± {test_perfs.std():.4f}')
+print(valid_perfs.tolist())
+print(test_perfs.tolist())
+        
 
 
 
