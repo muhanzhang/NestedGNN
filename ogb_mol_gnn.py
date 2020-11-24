@@ -36,7 +36,8 @@ class GNN(torch.nn.Module):
                  node_label='hop', conv_after_subgraph_pooling=False, 
                  virtual_node_2=True, residual_plus=False, center_pool_virtual=False, 
                  use_junction_tree=False, inter_message_passing=False, 
-                 use_atom_linear=False, concat_z_embedding=False, **kwargs):
+                 use_atom_linear=False, concat_z_embedding=False, use_rd=False, 
+                 use_rp=None, **kwargs):
         '''
             num_tasks (int): number of labels to be predicted
             virtual_node (bool): whether to add virtual node or not
@@ -56,6 +57,8 @@ class GNN(torch.nn.Module):
         self.use_junction_tree = use_junction_tree
         self.inter_message_passing = inter_message_passing
         self.use_atom_linear = use_atom_linear
+        self.use_rd = use_rd
+        self.use_rp = use_rp
 
         if self.num_layer < 2:
             raise ValueError("Number of GNN layers must be greater than 1.")
@@ -73,6 +76,8 @@ class GNN(torch.nn.Module):
                 center_pool_virtual=center_pool_virtual, 
                 inter_message_passing=inter_message_passing, 
                 concat_z_embedding=concat_z_embedding, 
+                use_rd=use_rd, 
+                use_rp=use_rp, 
             )
         else:
             self.gnn_node = GNN_node(
@@ -505,7 +510,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
     """
     def __init__(self, num_layer, emb_dim, drop_ratio=0.5, JK="last", residual=False, 
                  gnn_type='gin', node_label='hop', use_rd=False, adj_dropout=0, 
-                 skip_atom_encoder=False, residual_plus=False, 
+                 skip_atom_encoder=False, residual_plus=False, use_rp=None, 
                  center_pool_virtual=False, inter_message_passing=False, 
                  concat_z_embedding=False):
         '''
@@ -524,6 +529,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
 
         self.node_label = node_label
         self.use_rd = use_rd
+        self.use_rp = use_rp
         self.adj_dropout = adj_dropout
         self.residual_plus = residual_plus
         self.center_pool_virtual = center_pool_virtual
@@ -535,10 +541,13 @@ class GNN_node_Virtualnode(torch.nn.Module):
             x_emb_dim = emb_dim - z_emb_dim
         else:
             z_emb_dim, x_emb_dim = emb_dim, emb_dim
+
         if use_rd:
-            self.z_projection = torch.nn.Linear(1, z_emb_dim)
-        else:
-            self.z_embedding = torch.nn.Embedding(1000, z_emb_dim)
+            self.rd_projection = torch.nn.Linear(1, z_emb_dim)
+        if use_rp is not None:
+            self.rp_projection = torch.nn.Linear(use_rp, z_emb_dim)
+
+        self.z_embedding = torch.nn.Embedding(1000, z_emb_dim)
 
         if self.num_layer < 1:
             raise ValueError("Number of GNN layers must be greater than 0.")
@@ -610,21 +619,31 @@ class GNN_node_Virtualnode(torch.nn.Module):
             
 
         if self.skip_atom_encoder:
-            h_list = [x]
-        elif 'z' in batched_data:
+            h0 = x
+        else:
+            h0 = self.atom_encoder(x)
+
+        z_emb = 0
+        if 'z' in batched_data:
             ### computing input node embedding
             z_emb = self.z_embedding(batched_data.z)
             if z_emb.ndim == 3:
                 z_emb = z_emb.sum(dim=1)
-            if self.use_rd:
-                z_proj = self.z_projection(batched_data.rd)
-                z_emb = z_emb + z_proj
-            if self.concat_z_embedding:
-                h_list = [torch.cat([z_emb, self.atom_encoder(x)], -1)]
-            else:
-                h_list = [self.atom_encoder(x) + z_emb]
+
+        if self.use_rd and 'rd' in batched_data:
+            rd_proj = self.rd_projection(batched_data.rd)
+            z_emb = z_emb + rd_proj
+
+        if self.use_rp and 'rp' in batched_data:
+            rp_proj = self.rp_projection(batched_data.rp)
+            z_emb = z_emb + rp_proj
+
+        if self.concat_z_embedding:
+            h0 = torch.cat([z_emb, h0], -1)
         else:
-            h_list = [self.atom_encoder(x)]
+            h0 += z_emb
+
+        h_list = [h0]
 
         if perturb is not None:
             h_list[0] = h_list[0] + perturb

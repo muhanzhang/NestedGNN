@@ -5,7 +5,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import scipy.sparse as ssp
 from scipy import linalg
-from scipy.sparse.linalg import inv
+from scipy.linalg import inv, eig, eigh
 import numpy as np
 from torch_geometric.data import Data
 from torch_geometric.utils import to_scipy_sparse_matrix
@@ -14,8 +14,52 @@ from batch import Batch
 from collections import defaultdict
 
 
+class return_prob(object):
+    def __init__(self, steps=50):
+        self.steps = steps
+
+    def __call__(self, data):
+        adj = to_scipy_sparse_matrix(data.edge_index, num_nodes=data.num_nodes).tocsr()
+        adj += ssp.identity(data.num_nodes, dtype='int', format='csr')
+        rp = np.empty([data.num_nodes, self.steps])
+        inv_deg = ssp.lil_matrix((data.num_nodes, data.num_nodes))
+        inv_deg.setdiag(1 / adj.sum(1))
+        P = inv_deg * adj
+        if self.steps < 5:
+            Pi = P
+            for i in range(self.steps):
+                rp[:, i] = Pi.diagonal()
+                Pi = Pi * P
+        else:
+            inv_sqrt_deg = ssp.lil_matrix((data.num_nodes, data.num_nodes))
+            inv_sqrt_deg.setdiag(1 / (np.array(adj.sum(1)) ** 0.5))
+            #B = inv_sqrt_deg * adj * inv_sqrt_deg.transpose()
+            B = inv_sqrt_deg * adj * inv_sqrt_deg
+            #B = (B + B.transpose()) / 2
+            L, U = eigh(B.todense())
+            W = U * U
+            Li = L
+            for i in range(self.steps):
+                rp[:, i] = W.dot(Li)
+                Li = Li * L
+        '''
+        else:
+            L, U = eig(P.todense(), right=True)
+            V = inv(U)
+            W = U * V.transpose()
+            Li = L
+            for i in range(self.steps):
+                rp[:, i] = W.dot(Li)
+                Li = Li * L
+        '''
+
+        data.rp = torch.FloatTensor(rp)
+
+        return data
+            
+
 def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
-                     node_label='hop', use_rd=False):
+                     node_label='hop', use_rd=False, use_rp=False):
     # Given a PyG graph data, extract an h-hop enclosing subgraph for each of its
     # nodes, and combine these node-subgraphs into a new large disconnected graph
 
@@ -56,6 +100,12 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
                 lyx = L_inv[:, 0]
                 rd_to_x = torch.FloatTensor((lxx + lyy - lxy - lyx)).unsqueeze(1)
                 data_.rd = rd_to_x
+
+            # TODO: finish this
+            if use_rp is not None:
+                steps = int(use_rp)
+                adj = to_scipy_sparse_matrix(edge_index_, num_nodes=nodes_.shape[0]).tocsr()
+                
 
             subgraphs.append(data_)
 

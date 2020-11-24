@@ -24,7 +24,7 @@ from ogb.graphproppred import Evaluator
 from dataset_pyg import PygGraphPropPredDataset  # customized to support data list
 
 from dataloader import DataLoader  # use a custom dataloader to handle subgraphs
-from utils import create_subgraphs
+from utils import create_subgraphs, return_prob
 
 from himp_transform import JunctionTree
 from attacks import *
@@ -187,6 +187,9 @@ parser.add_argument('--node_label', type=str, default='hop',
                     labels as additional node features; support "hop", "drnl", "spd"')
 parser.add_argument('--use_rd', action='store_true', default=False, 
                     help='use resistance distance as additional node labels')
+parser.add_argument('--use_rp', type=int, default=None, 
+                    help='use RW return probability as additional node features,\
+                    specify num of RW steps here')
 parser.add_argument('--concat_z_embedding', action='store_true', default=False)
 parser.add_argument('--use_junction_tree', action='store_true', default=False)
 parser.add_argument('--inter_message_passing', action='store_true', default=False)
@@ -289,6 +292,13 @@ if args.use_junction_tree:
     else:
         pre_transform = Compose([JunctionTree(), pre_transform])
 
+if args.use_rp is not None:  # use RW return probability as additional features
+    path += f'_rp{args.use_rp}'
+    if pre_transform is None:
+        pre_transform = return_prob(args.use_rp)
+    else:
+        pre_transform = Compose([return_prob, pre_transform])
+
 
 ### automatic dataloading and splitting
 dataset = PygGraphPropPredDataset(
@@ -322,6 +332,7 @@ if args.pre_visualize:
 kwargs = {
         'node_label': args.node_label, 
         'use_rd': args.use_rd, 
+        'use_rp': args.use_rp, 
         'adj_dropout': args.adj_dropout, 
         'graph_pooling': args.graph_pooling, 
         "subgraph_pooling": args.subgraph_pooling, 
