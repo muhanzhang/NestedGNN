@@ -297,7 +297,7 @@ if args.use_rp is not None:  # use RW return probability as additional features
     if pre_transform is None:
         pre_transform = return_prob(args.use_rp)
     else:
-        pre_transform = Compose([return_prob, pre_transform])
+        pre_transform = Compose([return_prob(args.use_rp), pre_transform])
 
 
 ### automatic dataloading and splitting
@@ -404,7 +404,7 @@ for run in range(args.runs):
     eval_metric = dataset.eval_metric
     best_valid_perf = -1E6 if 'classification' in dataset.task_type else 1E6
     for epoch in range(start_epoch, start_epoch + args.epochs):
-        print(f"=====Run {run}, epoch {epoch}, {args.save_appendix}")
+        print(f"=====Run {run+1}, epoch {epoch}, {args.save_appendix}")
         print('Training...')
         loss = train(model, device, train_loader, optimizer, dataset.task_type)
 
@@ -442,7 +442,7 @@ for run in range(args.runs):
             torch.save(optimizer.state_dict(), optimizer_name)
 
     final_res = '''Run {}\nBest validation score: {}\nTest score: {}
-    '''.format(run, best_valid_perf, best_test_perf)
+    '''.format(run+1, best_valid_perf, best_test_perf)
     print('Finished training!')
     cmd_input = 'python ' + ' '.join(sys.argv)
     print(cmd_input)

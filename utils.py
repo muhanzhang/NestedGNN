@@ -33,25 +33,13 @@ class return_prob(object):
         else:
             inv_sqrt_deg = ssp.lil_matrix((data.num_nodes, data.num_nodes))
             inv_sqrt_deg.setdiag(1 / (np.array(adj.sum(1)) ** 0.5))
-            #B = inv_sqrt_deg * adj * inv_sqrt_deg.transpose()
             B = inv_sqrt_deg * adj * inv_sqrt_deg
-            #B = (B + B.transpose()) / 2
             L, U = eigh(B.todense())
             W = U * U
             Li = L
             for i in range(self.steps):
                 rp[:, i] = W.dot(Li)
                 Li = Li * L
-        '''
-        else:
-            L, U = eig(P.todense(), right=True)
-            V = inv(U)
-            W = U * V.transpose()
-            Li = L
-            for i in range(self.steps):
-                rp[:, i] = W.dot(Li)
-                Li = Li * L
-        '''
 
         data.rp = torch.FloatTensor(rp)
 

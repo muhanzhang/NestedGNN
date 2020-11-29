@@ -581,8 +581,13 @@ class GNN_node_Virtualnode(torch.nn.Module):
             self.mlp_virtualnode_list = torch.nn.ModuleList()
 
             for layer in range(num_layer - 1):
-                self.mlp_virtualnode_list.append(torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.BatchNorm1d(2*emb_dim), torch.nn.ReLU(), \
-                                                        torch.nn.Linear(2*emb_dim, emb_dim), torch.nn.BatchNorm1d(emb_dim), torch.nn.ReLU()))
+                self.mlp_virtualnode_list.append(torch.nn.Sequential(
+                    torch.nn.Linear(emb_dim, 2*emb_dim), 
+                    torch.nn.BatchNorm1d(2*emb_dim), 
+                    torch.nn.ReLU(), 
+                    torch.nn.Linear(2*emb_dim, emb_dim), 
+                    torch.nn.BatchNorm1d(emb_dim), 
+                    torch.nn.ReLU()))
         else:
             # inter message passing with a junction tree
             self.clique_encoder = torch.nn.Embedding(4, emb_dim)
@@ -609,11 +614,14 @@ class GNN_node_Virtualnode(torch.nn.Module):
             x, edge_index, edge_attr, batch = batched_data.x, batched_data.edge_index, batched_data.edge_attr, batched_data.batch
 
         if self.adj_dropout > 0:
-            edge_index, edge_attr = dropout_adj(edge_index, edge_attr, p=self.adj_dropout, num_nodes=len(x), training=self.training)
+            edge_index, edge_attr = dropout_adj(edge_index, edge_attr, 
+                                                p=self.adj_dropout, num_nodes=len(x), 
+                                                training=self.training)
 
         if not self.inter_message_passing:
             ### virtual node embeddings for graphs
-            virtualnode_embedding = self.virtualnode_embedding(torch.zeros(batch[-1].item() + 1).to(edge_index.dtype).to(edge_index.device))
+            virtualnode_embedding = self.virtualnode_embedding(
+                torch.zeros(batch[-1].item() + 1).to(edge_index.dtype).to(edge_index.device))
         else:
             x_clique = self.clique_encoder(batched_data.x_clique.squeeze())
             
@@ -636,6 +644,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
 
         if self.use_rp and 'rp' in batched_data:
             rp_proj = self.rp_projection(batched_data.rp)
+            if rp_proj.shape[0] != batched_data.num_nodes:
+                rp_proj = rp_proj[batched_data.node_to_subgraph]
             z_emb = z_emb + rp_proj
 
         if self.concat_z_embedding:
@@ -700,7 +710,9 @@ class GNN_node_Virtualnode(torch.nn.Module):
             for layer in range(self.num_layer):
                 ### add message from virtual nodes to graph nodes
                 if self.center_pool_virtual:
-                    h_list[layer] = center_pool_virtual(h_list[layer], batched_data.node_to_subgraph, virtualnode_embedding[batched_data.subgraph_to_graph])
+                    h_list[layer] = center_pool_virtual(
+                        h_list[layer], batched_data.node_to_subgraph, 
+                        virtualnode_embedding[batched_data.subgraph_to_graph])
                 else:
                     h_list[layer] = h_list[layer] + virtualnode_embedding[batch]
 
