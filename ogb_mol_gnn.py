@@ -60,8 +60,8 @@ class GNN(torch.nn.Module):
         self.use_rd = use_rd
         self.use_rp = use_rp
 
-        if self.num_layer < 2:
-            raise ValueError("Number of GNN layers must be greater than 1.")
+        #if self.num_layer < 2:
+        #    raise ValueError("Number of GNN layers must be greater than 1.")
 
         ### GNN to generate node embeddings
         if virtual_node:
@@ -439,8 +439,8 @@ class GNN_node(torch.nn.Module):
         else:
             self.z_embedding = torch.nn.Embedding(1000, emb_dim)
 
-        if self.num_layer < 2:
-            raise ValueError("Number of GNN layers must be greater than 1.")
+        #if self.num_layer < 2:
+        #    raise ValueError("Number of GNN layers must be greater than 1.")
 
         self.atom_encoder = AtomEncoder(emb_dim)
 
