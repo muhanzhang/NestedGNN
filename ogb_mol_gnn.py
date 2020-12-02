@@ -549,8 +549,8 @@ class GNN_node_Virtualnode(torch.nn.Module):
 
         self.z_embedding = torch.nn.Embedding(1000, z_emb_dim)
 
-        if self.num_layer < 1:
-            raise ValueError("Number of GNN layers must be greater than 0.")
+        #if self.num_layer < 1:
+        #    raise ValueError("Number of GNN layers must be greater than 0.")
 
         self.skip_atom_encoder = skip_atom_encoder
         if not self.skip_atom_encoder:
