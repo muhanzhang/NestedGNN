@@ -184,7 +184,9 @@ parser.add_argument('--multiple_h', type=str, default=None,
                     "2,3", which will overwrite h with a list [2, 3]')
 parser.add_argument('--node_label', type=str, default='hop', 
                     help='apply labeling trick to nodes within each subgraph, use node\
-                    labels as additional node features; support "hop", "drnl", "spd"')
+                    labels as additional node features; support "hop", "drnl", "spd", \
+                    for "spd", you can specify number of spd to keep by "spd3", "spd4", \
+                    "spd5", etc. Default "spd"=="spd2".')
 parser.add_argument('--use_rd', action='store_true', default=False, 
                     help='use resistance distance as additional node labels')
 parser.add_argument('--use_rp', type=int, default=None, 

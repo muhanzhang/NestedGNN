@@ -710,6 +710,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
             for layer in range(self.num_layer):
                 ### add message from virtual nodes to graph nodes
                 if self.center_pool_virtual:
+                    # only add virtual node embedding to the center node within each subgraph
                     h_list[layer] = center_pool_virtual(
                         h_list[layer], batched_data.node_to_subgraph, 
                         virtualnode_embedding[batched_data.subgraph_to_graph])

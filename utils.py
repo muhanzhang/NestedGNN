@@ -47,7 +47,7 @@ class return_prob(object):
             
 
 def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
-                     node_label='hop', use_rd=False, use_rp=False):
+                     node_label='hop', use_rd=False):
     # Given a PyG graph data, extract an h-hop enclosing subgraph for each of its
     # nodes, and combine these node-subgraphs into a new large disconnected graph
 
@@ -88,12 +88,6 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
                 lyx = L_inv[:, 0]
                 rd_to_x = torch.FloatTensor((lxx + lyy - lxy - lyx)).unsqueeze(1)
                 data_.rd = rd_to_x
-
-            # TODO: finish this
-            if use_rp is not None:
-                steps = int(use_rp)
-                adj = to_scipy_sparse_matrix(edge_index_, num_nodes=nodes_.shape[0]).tocsr()
-                
 
             subgraphs.append(data_)
 
@@ -182,15 +176,17 @@ def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
         hop = torch.cat([torch.LongTensor([0], device=row.device), hop])
         z = hop.unsqueeze(1)
     else:
-        if node_label == 'spd':
-            z = torch.zeros([subset.size(0), 2], dtype=torch.long, device=row.device)
+        if node_label.startswith('spd'):
+            num_spd = int(node_label[3:]) if len(node_label) > 3 else 2
+            z = torch.zeros([subset.size(0), num_spd], dtype=torch.long, device=row.device)
         elif node_label == 'drnl':
+            num_spd = 2
             z = torch.zeros([subset.size(0), 1], dtype=torch.long, device=row.device)
 
         for i, node in enumerate(subset.tolist()):
-            dists = label[node][:2]  # keep top-2 distances
+            dists = label[node][:num_spd]  # keep top num_spd distances
             if node_label == 'spd':
-                z[i][:min(2, len(dists))] = torch.tensor(dists)
+                z[i][:min(num_spd, len(dists))] = torch.tensor(dists)
             elif node_label == 'drnl':
                 dist1 = dists[0]
                 dist2 = dists[1] if len(dists) == 2 else 0
