@@ -28,6 +28,7 @@ from utils import create_subgraphs, return_prob
 
 from himp_transform import JunctionTree
 from attacks import *
+from ogb_mol_gnn import PPGN
 
 cls_criterion = torch.nn.BCEWithLogitsLoss
 reg_criterion = torch.nn.MSELoss
@@ -121,8 +122,11 @@ def eval(model, device, loader, evaluator, return_loss=False, task_type=None):
 
     y_true = torch.cat(y_true, dim=0).numpy()
     y_pred = torch.cat(y_pred, dim=0).numpy()
+    #pdb.set_trace()
     input_dict = {"y_true": y_true, "y_pred": y_pred}
     res = evaluator.eval(input_dict)
+    if res['rocauc'] == 0.5:
+        pdb.set_trace()
     return res
 
 
@@ -357,8 +361,6 @@ if args.gnn.startswith('gin'):
     gnn_type = 'gin'
 elif args.gnn.startswith('gcn'):
     gnn_type = 'gcn'
-else:
-    raise ValueError('Invalid GNN type')
 
 if args.gnn.endswith('virtual'):
     virtual_node = True
@@ -367,9 +369,12 @@ else:
 
 valid_perfs, test_perfs = [], []
 for run in range(args.runs):
-    model = GNN(gnn_type=gnn_type, num_tasks=dataset.num_tasks, emb_dim=args.emb_dim, 
-                drop_ratio=args.drop_ratio, virtual_node=virtual_node, 
-                **kwargs).to(device)
+    if args.gnn == 'PPGN':
+        model = PPGN(num_tasks=dataset.num_tasks).to(device)
+    else:
+        model = GNN(gnn_type=gnn_type, num_tasks=dataset.num_tasks, emb_dim=args.emb_dim, 
+                    drop_ratio=args.drop_ratio, virtual_node=virtual_node, 
+                    **kwargs).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     if args.scheduler:

@@ -4,13 +4,15 @@ from torch_geometric.nn import global_add_pool, global_mean_pool, global_max_poo
 import torch.nn.functional as F
 from torch_geometric.nn.inits import uniform
 from ogb.graphproppred.mol_encoder import BondEncoder
-from torch_geometric.utils import degree, dropout_adj
+from torch_geometric.utils import degree, dropout_adj, to_dense_batch, to_dense_adj
 from ogb.utils.features import get_atom_feature_dims
 from torch_geometric.data import Data
 import math
 import numpy as np
-
+from scipy.sparse.csgraph import shortest_path
 from torch_scatter import scatter, scatter_mean
+from modules import *
+from layers import *
 import pdb
 
 def center_pool(x, node_to_subgraph):
@@ -761,6 +763,95 @@ class GNN_node_Virtualnode(torch.nn.Module):
             return node_representation, x_clique
         
         return node_representation
+
+
+class PPGN(torch.nn.Module):
+    # Provably powerful graph networks
+    def __init__(self, num_tasks, emb_dim=100, use_embedding=True, use_spd=False, 
+                 **kwargs):
+        super(PPGN, self).__init__()
+
+        self.use_embedding = use_embedding
+        self.use_spd = use_spd
+
+        if self.use_embedding:
+            self.bond_encoder = BondEncoder(emb_dim=emb_dim)
+            self.atom_encoder = AtomEncoder(emb_dim)
+            initial_dim = 1 + emb_dim * 2
+        else:
+            initial_dim = 1 + 3 + 9  # 9 atom features + 3 bond types + adj
+        
+        if self.use_spd:
+            initial_dim += 1
+
+        # ppgn modules
+        num_blocks = 2
+        num_layers = 3
+
+        self.ppgn_rb = torch.nn.ModuleList()
+        self.ppgn_rb.append(RegularBlock(num_blocks, initial_dim, emb_dim))
+        for i in range(num_layers - 1):
+            self.ppgn_rb.append(RegularBlock(num_blocks, emb_dim, emb_dim))
+            
+        self.ppgn_fc = torch.nn.ModuleList()
+        self.ppgn_fc.append(FullyConnected(emb_dim * 2, emb_dim))
+        for i in range(num_layers - 2):
+            self.ppgn_fc.append(FullyConnected(emb_dim, emb_dim))
+        self.ppgn_fc.append(FullyConnected(emb_dim, num_tasks, activation_fn=None))
+
+    def forward(self, data):
+        if self.use_embedding:
+            edge_embedding = self.bond_encoder(data.edge_attr)
+            node_embedding = self.atom_encoder(data.x)
+        else:
+            edge_embedding = data.edge_attr.to(torch.float)
+            node_embedding = data.x.to(torch.float)
+
+        # prepare dense data
+        device = data.edge_attr.device
+        edge_adj = torch.ones(data.edge_attr.shape[0], 1).to(device)
+        edge_data = torch.cat([edge_adj, edge_embedding], 1)
+        dense_edge_data = to_dense_adj(
+            data.edge_index, data.batch, edge_data
+        )  # |graphs| * max_nodes * max_nodes * edge_data_dim
+
+        dense_node_data = to_dense_batch(node_embedding, data.batch)[0]  # |graphs| * max_nodes * d
+        shape = dense_node_data.shape
+        shape = (shape[0], shape[1], shape[1], shape[2])
+        diag_node_data = torch.empty(*shape).to(data.edge_attr.device)
+        
+        if self.use_spd:
+            dense_dist_mat = torch.zeros(shape[0], shape[1], shape[1], 1).to(device)
+
+        for g in range(shape[0]):
+            if self.use_spd:
+                g_adj = dense_edge_data[g, :, :, 0].cpu().detach().numpy()
+                g_dist_mat = torch.tensor(shortest_path(g_adj))
+                g_dist_mat[torch.isinf(g_dist_mat)] = 0
+                g_dist_mat /= g_dist_mat.max() + 1  # normalize
+                g_dist_mat = g_dist_mat.unsqueeze(0).to(device)
+                dense_dist_mat[g, :, :, 0] = g_dist_mat
+            for i in range(shape[-1]):
+                diag_node_data[g, :, :, i] = torch.diag(dense_node_data[g, :, i])
+
+        if self.use_spd:
+            z = torch.cat([dense_dist_mat, dense_edge_data, diag_node_data], -1)
+        else:
+            z = torch.cat([dense_edge_data, diag_node_data], -1)
+        z = torch.transpose(z, 1, 3)
+
+        # ppng
+        for rb in self.ppgn_rb:
+            z = rb(z)
+
+        #z = diag_offdiag_maxpool(z)
+        z = diag_offdiag_meanpool(z)
+
+        for fc in self.ppgn_fc:
+            z = fc(z)
+
+        torch.cuda.empty_cache()
+        return z
 
 
 if __name__ == '__main__':
