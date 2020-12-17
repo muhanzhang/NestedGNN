@@ -8,6 +8,7 @@ import ogb
 from ogb.utils.url import decide_download, download_url, extract_zip
 from ogb.io.read_graph_pyg import read_graph_pyg
 from itertools import repeat
+from tqdm import tqdm
 
 
 class PygGraphPropPredDataset(InMemoryDataset):
@@ -171,7 +172,11 @@ class PygGraphPropPredDataset(InMemoryDataset):
                     g.y = torch.from_numpy(graph_label[i]).view(1,-1).to(torch.float32)
 
         if self.pre_transform is not None:
-            data_list = [self.pre_transform(data) for data in data_list]
+            new_data_list = []
+            for data in tqdm(data_list, ncols=70):
+                new_data_list.append(self.pre_transform(data))
+            del data_list
+            data_list = new_data_list
 
         if self.skip_collate:
             print('Saving...')

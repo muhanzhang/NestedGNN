@@ -1,4 +1,5 @@
 import torch
+import pdb
 
 
 def diag_offdiag_maxpool(input):
@@ -16,3 +17,12 @@ def diag_offdiag_maxpool(input):
     max_offdiag = torch.max(torch.max(input - min_mat, dim=3)[0], dim=2)[0]  # BxS
 
     return torch.cat((max_diag, max_offdiag), dim=1)  # output Bx2S
+
+
+def diag_offdiag_meanpool(input):
+    N = input.shape[-1]
+
+    mean_diag = torch.mean(torch.diagonal(input, dim1=-2, dim2=-1), dim=2)  # BxS
+    mean_offdiag = (torch.sum(input, dim=[-1, -2]) - mean_diag * N) / (N * N - N)
+
+    return torch.cat((mean_diag, mean_offdiag), dim=1)  # output Bx2S
