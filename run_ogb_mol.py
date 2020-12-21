@@ -125,8 +125,6 @@ def eval(model, device, loader, evaluator, return_loss=False, task_type=None):
     #pdb.set_trace()
     input_dict = {"y_true": y_true, "y_pred": y_pred}
     res = evaluator.eval(input_dict)
-    if res['rocauc'] == 0.5:
-        pdb.set_trace()
     return res
 
 
