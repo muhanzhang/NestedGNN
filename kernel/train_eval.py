@@ -49,7 +49,7 @@ def cross_validation_with_val_set(dataset,
 
         t_start = time.perf_counter()
 
-        pbar = tqdm(range(1, epochs + 1))
+        pbar = tqdm(range(1, epochs + 1), ncols=70)
         cur_val_losses = []
         cur_accs = []
         for epoch in pbar:
@@ -146,7 +146,7 @@ def cross_validation_without_val_set( dataset,
 
         t_start = time.perf_counter()
 
-        pbar = tqdm(range(1, epochs + 1))
+        pbar = tqdm(range(1, epochs + 1), ncols=70)
         for epoch in pbar:
             train_loss = train(model, optimizer, train_loader, device)
             test_losses.append(eval_loss(model, test_loader, device))

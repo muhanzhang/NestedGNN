@@ -6,7 +6,7 @@ from torch_geometric.datasets import TUDataset
 from torch_geometric.utils import degree
 import torch_geometric.transforms as T
 sys.path.append('%s/../' % os.path.dirname(os.path.realpath(__file__)))
-from utils import create_subgraphs
+from utils import create_subgraphs, return_prob
 
 
 class NormalizedDegree(object):
@@ -21,16 +21,24 @@ class NormalizedDegree(object):
         return data
 
 
-def get_dataset(name, sparse=True, subgraph=True, h=1, use_hop_label=False, 
-                reprocess=False, clean=False):
-    path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', name)
-    if subgraph:
-        path += '_sg_' + str(h)
-        if use_hop_label:
-            path += '_hoplabel'
-        pre_transform = lambda x: create_subgraphs(x, h)
-    else:
-        pre_transform = None
+def get_dataset(name, sparse=True, h=None, node_label='hop', use_rd=False, 
+                use_rp=None, reprocess=False, clean=False):
+    path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data')
+    pre_transform = None
+    if h is not None:
+        path += '/ngnn_h' + str(h)
+        path += '_' + node_label
+        if use_rd:
+            path += '_rd'
+        pre_transform = lambda x: create_subgraphs(x, h, 1.0, None, node_label, use_rd)
+
+    if use_rp is not None:  # use RW return probability as additional features
+        path += f'_rp{use_rp}'
+        if pre_transform is None:
+            pre_transform = return_prob(use_rp)
+        else:
+            pre_transform = T.Compose([return_prob(use_rp), pre_transform])
+
     if reprocess and os.path.isdir(path):
         rmtree(path)
 

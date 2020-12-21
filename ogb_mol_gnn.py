@@ -767,7 +767,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
 
 class PPGN(torch.nn.Module):
     # Provably powerful graph networks
-    def __init__(self, num_tasks, emb_dim=100, use_embedding=True, use_spd=False, 
+    def __init__(self, num_tasks, emb_dim=300, use_embedding=True, use_spd=False, 
                  **kwargs):
         super(PPGN, self).__init__()
 
@@ -786,16 +786,17 @@ class PPGN(torch.nn.Module):
 
         # ppgn modules
         num_blocks = 2
-        num_layers = 3
+        num_rb_layers = 4
+        num_fc_layers = 2
 
         self.ppgn_rb = torch.nn.ModuleList()
         self.ppgn_rb.append(RegularBlock(num_blocks, initial_dim, emb_dim))
-        for i in range(num_layers - 1):
+        for i in range(num_rb_layers - 1):
             self.ppgn_rb.append(RegularBlock(num_blocks, emb_dim, emb_dim))
             
         self.ppgn_fc = torch.nn.ModuleList()
         self.ppgn_fc.append(FullyConnected(emb_dim * 2, emb_dim))
-        for i in range(num_layers - 2):
+        for i in range(num_fc_layers - 2):
             self.ppgn_fc.append(FullyConnected(emb_dim, emb_dim))
         self.ppgn_fc.append(FullyConnected(emb_dim, num_tasks, activation_fn=None))
 

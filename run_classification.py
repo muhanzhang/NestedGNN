@@ -1,5 +1,6 @@
 import os.path as osp
 import os, sys
+import time
 from shutil import copy, rmtree
 from itertools import product
 import pdb
@@ -12,7 +13,7 @@ from kernel.train_eval import cross_validation_with_val_set
 from kernel.train_eval import cross_validation_without_val_set
 from kernel.gcn import GCN
 from kernel.graph_sage import GraphSAGE, GraphSAGEWithoutJK
-from kernel.gin import GIN0, GIN
+from kernel.gin import *
 from kernel.graclus import Graclus
 from kernel.top_k import TopK
 from kernel.diff_pool import DiffPool
@@ -39,20 +40,24 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--data', type=str, default='MUTAG')
 parser.add_argument('--clean', action='store_true', default=False,
                     help='use a cleaned version of dataset by removing isomorphism')
-parser.add_argument('--model', type=str, default='DGCNN')
+parser.add_argument('--model', type=str, default='NGNN')
 parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--layers', type=int, default=4)
 parser.add_argument('--hiddens', type=int, default=32)
-parser.add_argument('--subgraph', action='store_true', default=False, 
-                    help='whether to use SubgraphConv')
-parser.add_argument('--h', type=int, default=1)
-parser.add_argument('--use_hop_label', action='store_true', default=False, 
-                    help='use one-hot encoding of which hop a node is included in \
-                    the enclosing subgraph as additional node features')
+parser.add_argument('--h', type=int, default=None)
 parser.add_argument('--multiple_h', type=str, default=None, 
                     help='use multiple hops of enclosing subgraphs, example input:\
                     "2,3", which will overwrite h with a list [2, 3]')
+parser.add_argument('--node_label', type=str, default='hop', 
+                    help='apply labeling trick to nodes within each subgraph, use node\
+                    labels as additional node features; support "hop", "drnl", "spd", \
+                    "spd5", etc. Default "spd"=="spd2".')
+parser.add_argument('--use_rd', action='store_true', default=False, 
+                    help='use resistance distance as additional node labels')
+parser.add_argument('--use_rp', type=int, default=None, 
+                    help='use RW return probability as additional node features,\
+                    specify num of RW steps here')
 parser.add_argument('--lr', type=float, default=1E-2)
 parser.add_argument('--lr_decay_factor', type=float, default=0.5)
 parser.add_argument('--lr_decay_step_size', type=int, default=50)
@@ -77,7 +82,10 @@ np.random.seed(args.seed)
 if args.multiple_h is not None:
     args.h = [int(h) for h in args.multiple_h.split(',')]
 file_dir = os.path.dirname(os.path.realpath('__file__'))
+if args.save_appendix == '':
+    args.save_appendix = '_' + time.strftime("%Y%m%d%H%M%S")
 args.res_dir = os.path.join(file_dir, 'results/TU{}'.format(args.save_appendix))
+print('Results will be saved in ' + args.res_dir)
 if not os.path.exists(args.res_dir):
     os.makedirs(args.res_dir) 
 if not args.keep_old:
@@ -104,9 +112,11 @@ else:
     datasets = [args.data]
 
 if args.search:
-    if not args.subgraph:
-        layers = [1, 2, 3, 4, 5]
-        hiddens = [16, 32, 64, 128]
+    if args.h is not None:
+        #layers = [1, 2, 3, 4, 5]
+        #hiddens = [16, 32, 64, 128]
+        layers = [2, 3, 4]
+        hiddens = [32, 128]
         hs = [None]
     else:
         layers = [2, 3, 3, 4, 4, 5, 5, 6]
@@ -131,7 +141,7 @@ else:
     SortPool,
 '''
 if args.model == 'all':
-    nets = [DGCNN, DGCNN_sub, GIN0]
+    nets = [GIN0, NestedGIN]
 else:
     nets = [eval(args.model)]
 
@@ -147,7 +157,7 @@ for dataset_name, Net in product(datasets, nets):
     log = '-----\n{} - {}'.format(dataset_name, Net.__name__)
     print(log)
     logger(log)
-    if args.subgraph:
+    if args.h is not None:
         combinations = zip(layers, hiddens, hs)
     else:
         combinations = product(layers, hiddens, hs)
@@ -158,14 +168,14 @@ for dataset_name, Net in product(datasets, nets):
         dataset = get_dataset(
             dataset_name, 
             Net != DiffPool, 
-            args.subgraph, 
             h, 
-            args.use_hop_label, 
+            args.node_label, 
+            args.use_rd, 
+            args.use_rp, 
             args.reprocess, 
             args.clean, 
         )
-        kwargs = {'subconv': args.subgraph}
-        model = Net(dataset, num_layers, hidden, **kwargs)
+        model = Net(dataset, num_layers, hidden)
         #loss, acc, std = cross_validation_without_val_set(
         loss, acc, std = cross_validation_with_val_set(
             dataset,
