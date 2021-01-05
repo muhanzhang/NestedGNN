@@ -382,11 +382,11 @@ for run in range(args.runs):
     if args.continue_from is not None:
         model.load_state_dict(
             torch.load(os.path.join(args.res_dir, 
-                'run{}_model_checkpoint{}.pth'.format(run, args.continue_from)))
+                'run{}_model_checkpoint{}.pth'.format(run+1, args.continue_from)))
         )
         optimizer.load_state_dict(
             torch.load(os.path.join(args.res_dir, 
-                'run{}_optimizer_checkpoint{}.pth'.format(run, args.continue_from)))
+                'run{}_optimizer_checkpoint{}.pth'.format(run+1, args.continue_from)))
         )
         start_epoch = args.continue_from + 1
         args.epochs -= args.continue_from
@@ -440,9 +440,9 @@ for run in range(args.runs):
 
         if epoch % args.log_steps == 0:
             model_name = os.path.join(
-                args.res_dir, 'run{}_model_checkpoint{}.pth'.format(run, epoch))
+                args.res_dir, 'run{}_model_checkpoint{}.pth'.format(run+1, epoch))
             optimizer_name = os.path.join(
-                args.res_dir, 'run{}_optimizer_checkpoint{}.pth'.format(run, epoch))
+                args.res_dir, 'run{}_optimizer_checkpoint{}.pth'.format(run+1, epoch))
             torch.save(model.state_dict(), model_name)
             torch.save(optimizer.state_dict(), optimizer_name)
 
