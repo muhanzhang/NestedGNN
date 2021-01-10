@@ -32,6 +32,7 @@ from ogb_mol_gnn import PPGN
 
 cls_criterion = torch.nn.BCEWithLogitsLoss
 reg_criterion = torch.nn.MSELoss
+multicls_criterion = torch.nn.CrossEntropyLoss
 
 def train(model, device, loader, optimizer, task_type):
     model.train()
@@ -49,8 +50,10 @@ def train(model, device, loader, optimizer, task_type):
         if skip_epoch:
             pass
 
-        if "classification" in task_type: 
+        if task_type == 'binary classification': 
             train_criterion = cls_criterion
+        elif task_type == 'multiclass classification':
+            train_criterion = multicls_criterion
         else:
             train_criterion = reg_criterion
 
@@ -63,6 +66,11 @@ def train(model, device, loader, optimizer, task_type):
         if args.attack is None:
             pred = model(batch)
             optimizer.zero_grad()
+
+
+            print(y.shape)
+            pdb.set_trace()
+
             ## ignore nan targets (unlabeled) when computing training loss.
             loss = train_criterion()(pred.to(torch.float32)[is_labeled], 
                                      y.to(torch.float32)[is_labeled])
@@ -79,6 +87,7 @@ def train(model, device, loader, optimizer, task_type):
     return total_loss / len(loader.dataset)
 
 
+@torch.no_grad()
 def eval(model, device, loader, evaluator, return_loss=False, task_type=None):
     model.eval()
     y_true = []
@@ -107,8 +116,10 @@ def eval(model, device, loader, evaluator, return_loss=False, task_type=None):
             y_pred.append(pred.detach().cpu())
 
         if return_loss:
-            if "classification" in task_type: 
+            if task_type == 'binary classification': 
                 train_criterion = cls_criterion
+            elif task_type == 'multiclass classification':
+                train_criterion = multicls_criterion
             else:
                 train_criterion = reg_criterion
             loss = train_criterion(reduction='none')(pred.to(torch.float32), 
@@ -122,6 +133,10 @@ def eval(model, device, loader, evaluator, return_loss=False, task_type=None):
 
     y_true = torch.cat(y_true, dim=0).numpy()
     y_pred = torch.cat(y_pred, dim=0).numpy()
+    
+    if task_type == 'multiclass classification':
+        y_pred = np.argmax(y_pred, 1).view(-1, 1)
+
     #pdb.set_trace()
     input_dict = {"y_true": y_true, "y_pred": y_pred}
     res = evaluator.eval(input_dict)
@@ -303,10 +318,17 @@ if args.use_rp is not None:  # use RW return probability as additional features
     else:
         pre_transform = Compose([return_prob(args.use_rp), pre_transform])
 
+transform = None
+if args.dataset == 'ogbg-ppa':
+    def add_zeros(data):
+        data.x = torch.zeros(data.num_nodes, dtype=torch.long)
+        return data
+    transform = add_zeros
+
 
 ### automatic dataloading and splitting
 dataset = PygGraphPropPredDataset(
-    name=args.dataset, root=path, pre_transform=pre_transform, 
+    name=args.dataset, root=path, transform=transform, pre_transform=pre_transform, 
     skip_collate=args.multiple_h is not None)
 
 if args.feature == 'full':
@@ -365,12 +387,14 @@ if args.gnn.endswith('virtual'):
 else:
     virtual_node = False
 
+num_classes = dataset.num_tasks if args.dataset.startswith('ogbg-mol') else dataset.num_classes
+
 valid_perfs, test_perfs = [], []
 for run in range(args.runs):
     if args.gnn == 'PPGN':
-        model = PPGN(num_tasks=dataset.num_tasks).to(device)
+        model = PPGN(num_classes).to(device)
     else:
-        model = GNN(gnn_type=gnn_type, num_tasks=dataset.num_tasks, emb_dim=args.emb_dim, 
+        model = GNN(num_classes, gnn_type=gnn_type, emb_dim=args.emb_dim, 
                     drop_ratio=args.drop_ratio, virtual_node=virtual_node, 
                     **kwargs).to(device)
 
