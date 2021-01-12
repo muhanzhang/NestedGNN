@@ -61,19 +61,21 @@ def train(model, device, loader, optimizer, task_type):
             y = batch[args.h[0]].y
         else:
             y = batch.y
+
+        if task_type == 'multiclass classification':
+            y = y.view(-1, )
+        else:
+            y = y.to(torch.float32)
+
         is_labeled = y == y
 
         if args.attack is None:
             pred = model(batch)
             optimizer.zero_grad()
 
-
-            print(y.shape)
-            pdb.set_trace()
-
             ## ignore nan targets (unlabeled) when computing training loss.
             loss = train_criterion()(pred.to(torch.float32)[is_labeled], 
-                                     y.to(torch.float32)[is_labeled])
+                                     y[is_labeled])
             loss.backward()
             optimizer.step()
         elif args.attack == 'flag':
@@ -112,7 +114,13 @@ def eval(model, device, loader, evaluator, return_loss=False, task_type=None):
                 y = batch[args.h[0]].y
             else:
                 y = batch.y
-            y_true.append(y.view(pred.shape).detach().cpu())
+
+            if task_type == 'multiclass classification':
+                y = y.view(-1, )
+            else:
+                y = y.view(pred.shape).to(torch.float32)
+
+            y_true.append(y.detach().cpu())
             y_pred.append(pred.detach().cpu())
 
         if return_loss:
@@ -123,7 +131,7 @@ def eval(model, device, loader, evaluator, return_loss=False, task_type=None):
             else:
                 train_criterion = reg_criterion
             loss = train_criterion(reduction='none')(pred.to(torch.float32), 
-                                                     y.to(torch.float32))
+                                                     y)
             loss[torch.isnan(loss)] = 0
             y_loss.append(loss.sum(1).cpu())
     
@@ -135,7 +143,8 @@ def eval(model, device, loader, evaluator, return_loss=False, task_type=None):
     y_pred = torch.cat(y_pred, dim=0).numpy()
     
     if task_type == 'multiclass classification':
-        y_pred = np.argmax(y_pred, 1).view(-1, 1)
+        y_pred = np.argmax(y_pred, 1).reshape([-1, 1])
+        y_true = y_true.reshape([-1, 1])
 
     #pdb.set_trace()
     input_dict = {"y_true": y_true, "y_pred": y_pred}
@@ -394,7 +403,7 @@ for run in range(args.runs):
     if args.gnn == 'PPGN':
         model = PPGN(num_classes).to(device)
     else:
-        model = GNN(num_classes, gnn_type=gnn_type, emb_dim=args.emb_dim, 
+        model = GNN(args.dataset, num_classes, gnn_type=gnn_type, emb_dim=args.emb_dim, 
                     drop_ratio=args.drop_ratio, virtual_node=virtual_node, 
                     **kwargs).to(device)
 
@@ -438,19 +447,20 @@ for run in range(args.runs):
         loss = train(model, device, train_loader, optimizer, dataset.task_type)
 
         print('Evaluating...')
-        valid_perf = eval(model, device, valid_loader, evaluator)[eval_metric]
+        valid_perf = eval(model, device, valid_loader, evaluator, False, 
+                          dataset.task_type)[eval_metric]
         if 'classification' in dataset.task_type:
             if valid_perf > best_valid_perf:
                 best_valid_perf = valid_perf
-                best_test_perf = eval(model, device, test_loader, 
-                                      evaluator)[eval_metric]
+                best_test_perf = eval(model, device, test_loader, evaluator, False, 
+                                      dataset.task_type)[eval_metric]
                 torch.save(model.state_dict(), 
                            os.path.join(args.res_dir, 'best_model.pth'))
         else:
             if valid_perf < best_valid_perf:
                 best_valid_perf = valid_perf
-                best_test_perf = eval(model, device, test_loader, 
-                                      evaluator)[eval_metric]
+                best_test_perf = eval(model, device, test_loader, evaluator, False, 
+                                      dataset.task_type)[eval_metric]
                 torch.save(model.state_dict(), 
                            os.path.join(args.res_dir, 'best_model.pth'))
         if args.scheduler:

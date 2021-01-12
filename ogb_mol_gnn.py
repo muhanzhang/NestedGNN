@@ -32,7 +32,7 @@ def center_pool_virtual(x, node_to_subgraph, virtual_embedding):
 
 class GNN(torch.nn.Module):
 
-    def __init__(self, num_tasks, num_layer=5, emb_dim=300, gnn_type='gin', 
+    def __init__(self, dataset, num_tasks, num_layer=5, emb_dim=300, gnn_type='gin', 
                  virtual_node=True, residual=False, drop_ratio=0.5, JK="last", 
                  graph_pooling="mean", subgraph_pooling="mean", 
                  node_label='hop', conv_after_subgraph_pooling=False, 
@@ -68,6 +68,7 @@ class GNN(torch.nn.Module):
         ### GNN to generate node embeddings
         if virtual_node:
             self.gnn_node = GNN_node_Virtualnode(
+                dataset, 
                 num_layer, 
                 emb_dim, 
                 JK=JK, 
@@ -94,9 +95,9 @@ class GNN(torch.nn.Module):
 
         if self.conv_after_subgraph_pooling:
             if virtual_node_2:
-                self.gnn_node_2 = GNN_node_Virtualnode(1, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, skip_atom_encoder=True, residual_plus=residual_plus)
+                self.gnn_node_2 = GNN_node_Virtualnode(dataset, 1, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, skip_node_encoder=True, residual_plus=residual_plus)
             else:
-                self.gnn_node_2 = GNN_node(1, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, skip_atom_encoder=True)
+                self.gnn_node_2 = GNN_node(1, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, skip_node_encoder=True)
 
         ### Pooling function to generate whole-graph embeddings
         if self.graph_pooling == "sum":
@@ -246,7 +247,7 @@ class NestedGNN(torch.nn.Module):
         self.gnn_node = torch.nn.ModuleList()
         for h in hs:
             if virtual_node:
-                self.gnn_node.append(GNN_node_Virtualnode(h + num_more_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h, 
+                self.gnn_node.append(GNN_node_Virtualnode(dataset, h + num_more_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h, 
                     concat_hop_embedding=concat_hop_embedding, use_resistance_distance=use_resistance_distance, residual_plus=residual_plus))
             else:
                 self.gnn_node.append(GNN_node(h + num_more_layer, emb_dim, JK = JK, drop_ratio = drop_ratio, residual = residual, gnn_type = gnn_type, use_hop_label=use_hop_label, h=h, 
@@ -333,7 +334,7 @@ class AtomEncoder(torch.nn.Module):
 
 ### GIN convolution along the graph structure
 class GINConv(MessagePassing):
-    def __init__(self, emb_dim):
+    def __init__(self, dataset, emb_dim):
         '''
             emb_dim (int): node embedding dimensionality
         '''
@@ -343,10 +344,13 @@ class GINConv(MessagePassing):
         self.mlp = torch.nn.Sequential(torch.nn.Linear(emb_dim, 2*emb_dim), torch.nn.BatchNorm1d(2*emb_dim), torch.nn.ReLU(), torch.nn.Linear(2*emb_dim, emb_dim))
         self.eps = torch.nn.Parameter(torch.Tensor([0]))
         
-        self.bond_encoder = BondEncoder(emb_dim = emb_dim)
+        if dataset.startswith('ogbg-mol'):
+            self.edge_encoder = BondEncoder(emb_dim = emb_dim)
+        elif dataset.startswith('ogbg-ppa'):
+            self.edge_encoder = torch.nn.Linear(7, emb_dim)
 
     def forward(self, x, edge_index, edge_attr):
-        edge_embedding = self.bond_encoder(edge_attr)    
+        edge_embedding = self.edge_encoder(edge_attr)    
         out = self.mlp((1 + self.eps) *x + self.propagate(edge_index, x=x, edge_attr=edge_embedding))
     
         return out
@@ -510,9 +514,9 @@ class GNN_node_Virtualnode(torch.nn.Module):
     Output:
         node representations
     """
-    def __init__(self, num_layer, emb_dim, drop_ratio=0.5, JK="last", residual=False, 
+    def __init__(self, dataset, num_layer, emb_dim, drop_ratio=0.5, JK="last", residual=False, 
                  gnn_type='gin', node_label='hop', use_rd=False, adj_dropout=0, 
-                 skip_atom_encoder=False, residual_plus=False, use_rp=None, 
+                 skip_node_encoder=False, residual_plus=False, use_rp=None, 
                  center_pool_virtual=False, inter_message_passing=False, 
                  concat_z_embedding=False):
         '''
@@ -554,9 +558,12 @@ class GNN_node_Virtualnode(torch.nn.Module):
         #if self.num_layer < 1:
         #    raise ValueError("Number of GNN layers must be greater than 0.")
 
-        self.skip_atom_encoder = skip_atom_encoder
-        if not self.skip_atom_encoder:
-            self.atom_encoder = AtomEncoder(x_emb_dim)
+        self.skip_node_encoder = skip_node_encoder
+        if not self.skip_node_encoder:
+            if dataset.startswith('ogbg-mol'):
+                self.node_encoder = AtomEncoder(x_emb_dim)
+            elif dataset.startswith('ogbg-ppa'):
+                self.node_encoder = torch.nn.Embedding(1, x_emb_dim) # uniform input node embedding
 
         ### set the initial virtual node embedding to 0.
         self.virtualnode_embedding = torch.nn.Embedding(1, emb_dim)
@@ -570,7 +577,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
 
         for layer in range(num_layer):
             if gnn_type == 'gin':
-                self.convs.append(GINConv(emb_dim))
+                self.convs.append(GINConv(dataset, emb_dim))
             elif gnn_type == 'gcn':
                 self.convs.append(GCNConv(emb_dim))
             else:
@@ -597,7 +604,7 @@ class GNN_node_Virtualnode(torch.nn.Module):
             self.clique_batch_norms = torch.nn.ModuleList()
 
             for layer in range(num_layer):
-                self.clique_convs.append(GINConvNoEdge(emb_dim))
+                self.clique_convs.append(GINConvNoEdge(dataset, emb_dim))
                 self.clique_batch_norms.append(torch.nn.BatchNorm1d(emb_dim))
 
             self.atom2clique_lins = torch.nn.ModuleList()
@@ -628,10 +635,10 @@ class GNN_node_Virtualnode(torch.nn.Module):
             x_clique = self.clique_encoder(batched_data.x_clique.squeeze())
             
 
-        if self.skip_atom_encoder:
+        if self.skip_node_encoder:
             h0 = x
         else:
-            h0 = self.atom_encoder(x)
+            h0 = self.node_encoder(x)
 
         z_emb = 0
         if 'z' in batched_data:
