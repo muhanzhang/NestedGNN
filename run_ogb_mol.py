@@ -26,9 +26,10 @@ from dataset_pyg import PygGraphPropPredDataset  # customized to support data li
 from dataloader import DataLoader  # use a custom dataloader to handle subgraphs
 from utils import create_subgraphs, return_prob
 
-from himp_transform import JunctionTree
 from attacks import *
 from ogb_mol_gnn import PPGN
+
+from gine_operations import ClassifierNetwork
 
 cls_criterion = torch.nn.BCEWithLogitsLoss
 reg_criterion = torch.nn.MSELoss
@@ -197,12 +198,12 @@ def visualize(dataset, save_path, name='vis', number=20, loss=None, sort=True):
 # Training settings
 parser = argparse.ArgumentParser(description='Nested GNN')
 parser.add_argument('--runs', type=int, default=1)
-parser.add_argument('--gnn', type=str, default='gin-virtual',
-                    help='GNN gin, gin-virtual, or gcn, or gcn-virtual')
+parser.add_argument('--gnn', type=str, default='gin',
+                    help='gin, gcn, ppgn, gine+')
+parser.add_argument('--virtual_node', type=bool, default=True, 
+                    help='enable using virtual node')
 parser.add_argument('--residual', action='store_true', default=False, 
                     help='enable residual connections between layers')
-parser.add_argument('--residual_plus', action='store_true', default=False, 
-                    help='enable residual_plus connections between layers')
 parser.add_argument('--h', type=int, default=None, help='hop of enclosing subgraph;\
                     if None, will not use NestedGNN')
 parser.add_argument('--multiple_h', type=str, default=None, 
@@ -218,10 +219,6 @@ parser.add_argument('--use_rd', action='store_true', default=False,
 parser.add_argument('--use_rp', type=int, default=None, 
                     help='use RW return probability as additional node features,\
                     specify num of RW steps here')
-parser.add_argument('--concat_z_embedding', action='store_true', default=False)
-parser.add_argument('--use_junction_tree', action='store_true', default=False)
-parser.add_argument('--inter_message_passing', action='store_true', default=False)
-parser.add_argument('--use_atom_linear', action='store_true', default=False)
 parser.add_argument('--adj_dropout', type=float, default=0,
                     help='adjacency matrix dropout ratio (default: 0)')
 parser.add_argument('--drop_ratio', type=float, default=0.5,
@@ -236,8 +233,6 @@ parser.add_argument('--sum_multi_hop_embedding', action='store_true', default=Fa
 parser.add_argument('--graph_pooling', type=str, default="mean")
 parser.add_argument('--subgraph_pooling', type=str, default="mean")
 parser.add_argument('--center_pool_virtual', action='store_true', default=False) 
-parser.add_argument('--conv_after_subgraph_pooling', action='store_true', default=False, 
-                    help='apply additional graph convolution after subgraph pooling')
 parser.add_argument('--emb_dim', type=int, default=300,
                     help='dimensionality of hidden units in GNNs (default: 300)')
 parser.add_argument('--batch_size', type=int, default=32,
@@ -313,13 +308,6 @@ if args.h is not None:
         return create_subgraphs(g, args.h, node_label=args.node_label, 
                                 use_rd=args.use_rd)
 
-if args.use_junction_tree:
-    path += '_jt'
-    if pre_transform is None:
-        pre_transform = JunctionTree()
-    else:
-        pre_transform = Compose([JunctionTree(), pre_transform])
-
 if args.use_rp is not None:  # use RW return probability as additional features
     path += f'_rp{args.use_rp}'
     if pre_transform is None:
@@ -372,14 +360,8 @@ kwargs = {
         'graph_pooling': args.graph_pooling, 
         "subgraph_pooling": args.subgraph_pooling, 
         'num_layer': args.num_layer, 
-        'conv_after_subgraph_pooling': args.conv_after_subgraph_pooling, 
         'residual': args.residual, 
-        'residual_plus': args.residual_plus, 
         'center_pool_virtual': args.center_pool_virtual, 
-        'use_junction_tree': args.use_junction_tree, 
-        'inter_message_passing': args.inter_message_passing, 
-        'use_atom_linear': args.use_atom_linear, 
-        'concat_z_embedding': args.concat_z_embedding, 
         # required when using multiple_h
         'num_more_layer': args.num_more_layer, 
         'hs': args.h, 
@@ -391,20 +373,25 @@ if args.gnn.startswith('gin'):
 elif args.gnn.startswith('gcn'):
     gnn_type = 'gcn'
 
-if args.gnn.endswith('virtual'):
-    virtual_node = True
-else:
-    virtual_node = False
 
 num_classes = dataset.num_tasks if args.dataset.startswith('ogbg-mol') else dataset.num_classes
 
 valid_perfs, test_perfs = [], []
 for run in range(args.runs):
-    if args.gnn == 'PPGN':
+    if args.gnn == 'ppgn':
         model = PPGN(num_classes).to(device)
+    elif args.gnn == 'gine+':
+        model = ClassifierNetwork(hidden=args.emb_dim,
+                                  out_dim=num_classes,
+                                  layers=args.num_layer,
+                                  dropout=args.drop_ratio,
+                                  virtual_node=args.virtual_node,
+                                  k=args.h,
+                                  conv_type='gin+', 
+                                  nested=args.h is not None).to(device)
     else:
         model = GNN(args.dataset, num_classes, gnn_type=gnn_type, emb_dim=args.emb_dim, 
-                    drop_ratio=args.drop_ratio, virtual_node=virtual_node, 
+                    drop_ratio=args.drop_ratio, virtual_node=args.virtual_node, 
                     **kwargs).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
