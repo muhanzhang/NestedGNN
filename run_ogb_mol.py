@@ -383,10 +383,12 @@ for run in range(args.runs):
     elif args.gnn == 'gine+':
         model = ClassifierNetwork(hidden=args.emb_dim,
                                   out_dim=num_classes,
-                                  layers=args.num_layer,
+                                  #layers=args.num_layer,
+                                  layers=args.h, 
                                   dropout=args.drop_ratio,
                                   virtual_node=args.virtual_node,
-                                  k=args.h,
+                                  #k=args.h,
+                                  k=args.h-2,
                                   conv_type='gin+', 
                                   nested=args.h is not None).to(device)
     else:
