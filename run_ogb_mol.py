@@ -389,6 +389,7 @@ for run in range(args.runs):
                                   virtual_node=args.virtual_node,
                                   #k=args.h,
                                   k=args.h-2,
+                                  #k=3,
                                   conv_type='gin+', 
                                   nested=args.h is not None).to(device)
     else:
