@@ -263,6 +263,10 @@ parser.add_argument('--feature', type=str, default="full",
                     help='full feature or simple feature')
 parser.add_argument('--ensemble', action='store_true', default=False,
                     help='if True, load a series of model checkpoints and ensemble the results')
+parser.add_argument('--ensemble_lookback', type=int, default=50,
+                    help='how many epochs to look back in ensemble')
+parser.add_argument('--ensemble_interval', type=int, default=10,
+                    help='ensemble every x epochs')
 parser.add_argument('--scheduler', action='store_true', default=False, 
                     help='use a scheduler to reduce learning rate')
 parser.add_argument('--save_appendix', type=str, default='',
@@ -504,10 +508,10 @@ for run in range(start_run, start_run + runs):
 
     if args.ensemble:
         print('Start ensemble testing...')
-        start_epoch, end_epoch, interval = args.epochs-50, args.epochs, 10
+        start_epoch, end_epoch = args.epochs - args.ensemble_lookback, args.epochs
         checkpoints = [
             os.path.join(args.res_dir, 'run{}_model_checkpoint{}.pth'.format(run+1, x)) 
-            for x in range(start_epoch, end_epoch+1, interval)
+            for x in range(start_epoch, end_epoch+1, args.ensemble_interval)
         ]
         ensemble_valid_perf = eval(model, device, valid_loader, evaluator, False, 
                                    dataset.task_type, checkpoints)[eval_metric]
