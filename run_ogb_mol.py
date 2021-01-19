@@ -91,63 +91,77 @@ def train(model, device, loader, optimizer, task_type):
 
 
 @torch.no_grad()
-def eval(model, device, loader, evaluator, return_loss=False, task_type=None):
+def eval(model, device, loader, evaluator, return_loss=False, 
+         task_type=None, checkpoints=[None]):
     model.eval()
-    y_true = []
-    y_pred = []
-    y_loss = []
 
-    for step, batch in enumerate(tqdm(loader, desc="Iteration", ncols=70)):
-        if type(batch) == dict:
-            batch = {key: data_.to(device) for key, data_ in batch.items()}
-            skip_epoch = batch[args.h[0]].x.shape[0] == 1
-        else:
-            batch = batch.to(device)
-            skip_epoch = batch.x.shape[0] == 1
+    Y_loss = []
+    Y_pred = []
+    for checkpoint in checkpoints:
+        if checkpoint:
+            model.load_state_dict(torch.load(checkpoint))
+            
+        y_true = []
+        y_pred = []
+        y_loss = []
 
-        if skip_epoch:
-            pass
-        else:
-            with torch.no_grad():
-                pred = model(batch)
-
-            if args.multiple_h is not None:
-                y = batch[args.h[0]].y
+        for step, batch in enumerate(tqdm(loader, desc="Iteration", ncols=70)):
+            if type(batch) == dict:
+                batch = {key: data_.to(device) for key, data_ in batch.items()}
+                skip_epoch = batch[args.h[0]].x.shape[0] == 1
             else:
-                y = batch.y
+                batch = batch.to(device)
+                skip_epoch = batch.x.shape[0] == 1
 
-            if task_type == 'multiclass classification':
-                y = y.view(-1, )
+            if skip_epoch:
+                pass
             else:
-                y = y.view(pred.shape).to(torch.float32)
+                with torch.no_grad():
+                    pred = model(batch)
 
-            y_true.append(y.detach().cpu())
-            y_pred.append(pred.detach().cpu())
+                if args.multiple_h is not None:
+                    y = batch[args.h[0]].y
+                else:
+                    y = batch.y
+
+                if task_type == 'multiclass classification':
+                    y = y.view(-1, )
+                else:
+                    y = y.view(pred.shape).to(torch.float32)
+
+                y_true.append(y.detach().cpu())
+                y_pred.append(pred.detach().cpu())
+
+            if return_loss:
+                if task_type == 'binary classification': 
+                    train_criterion = cls_criterion
+                elif task_type == 'multiclass classification':
+                    train_criterion = multicls_criterion
+                else:
+                    train_criterion = reg_criterion
+                loss = train_criterion(reduction='none')(pred.to(torch.float32), 
+                                                         y)
+                loss[torch.isnan(loss)] = 0
+                y_loss.append(loss.sum(1).cpu())
 
         if return_loss:
-            if task_type == 'binary classification': 
-                train_criterion = cls_criterion
-            elif task_type == 'multiclass classification':
-                train_criterion = multicls_criterion
-            else:
-                train_criterion = reg_criterion
-            loss = train_criterion(reduction='none')(pred.to(torch.float32), 
-                                                     y)
-            loss[torch.isnan(loss)] = 0
-            y_loss.append(loss.sum(1).cpu())
-    
+            y_loss = torch.cat(y_loss, dim=0).numpy()
+            Y_loss.append(y_loss)
+
+        y_true = torch.cat(y_true, dim=0).numpy()
+        y_pred = torch.cat(y_pred, dim=0).numpy()
+        Y_pred.append(y_pred)
+        
     if return_loss:
-        y_loss = torch.cat(y_loss, dim=0).numpy()
+        y_loss = np.stack(Y_loss).mean(0)
         return y_loss
 
-    y_true = torch.cat(y_true, dim=0).numpy()
-    y_pred = torch.cat(y_pred, dim=0).numpy()
+    y_pred = np.stack(Y_pred).mean(0)
     
     if task_type == 'multiclass classification':
         y_pred = np.argmax(y_pred, 1).reshape([-1, 1])
         y_true = y_true.reshape([-1, 1])
 
-    #pdb.set_trace()
     input_dict = {"y_true": y_true, "y_pred": y_pred}
     res = evaluator.eval(input_dict)
     return res
@@ -247,6 +261,8 @@ parser.add_argument('--dataset', type=str, default="ogbg-molhiv",
                     help='dataset name (ogbg-molhiv, ogbg-molpcba, etc.)')
 parser.add_argument('--feature', type=str, default="full",
                     help='full feature or simple feature')
+parser.add_argument('--ensemble', action='store_true', default=False,
+                    help='if True, load a series of model checkpoints and ensemble the results')
 parser.add_argument('--scheduler', action='store_true', default=False, 
                     help='use a scheduler to reduce learning rate')
 parser.add_argument('--save_appendix', type=str, default='',
@@ -254,6 +270,8 @@ parser.add_argument('--save_appendix', type=str, default='',
 parser.add_argument('--log_steps', type=int, default=10)
 parser.add_argument('--continue_from', type=int, default=None, 
                     help="from which epoch's checkpoint to continue training")
+parser.add_argument('--run_from', type=int, default=1, 
+                    help="from which run (of multiple experiments) to start")
 parser.add_argument('--visualize_all', action='store_true', default=False, 
                     help='visualize all graphs in dataset sequentially')
 parser.add_argument('--visualize_test', action='store_true', default=False, 
@@ -377,7 +395,9 @@ elif args.gnn.startswith('gcn'):
 num_classes = dataset.num_tasks if args.dataset.startswith('ogbg-mol') else dataset.num_classes
 
 valid_perfs, test_perfs = [], []
-for run in range(args.runs):
+start_run = args.run_from - 1
+runs = args.runs - args.run_from + 1
+for run in range(start_run, start_run + runs):
     if args.gnn == 'ppgn':
         model = PPGN(num_classes).to(device)
     elif args.gnn == 'gine+':
@@ -402,6 +422,7 @@ for run in range(args.runs):
         scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, 
                                                     gamma=args.lr_decay_factor)
     start_epoch = 1
+    epochs = args.epochs
     if args.continue_from is not None:
         model.load_state_dict(
             torch.load(os.path.join(args.res_dir, 
@@ -412,7 +433,7 @@ for run in range(args.runs):
                 'run{}_optimizer_checkpoint{}.pth'.format(run+1, args.continue_from)))
         )
         start_epoch = args.continue_from + 1
-        args.epochs -= args.continue_from
+        epochs = epochs - args.continue_from
 
     if args.visualize_all:  # visualize all graphs
         model.load_state_dict(torch.load(os.path.join(args.res_dir, 'best_model.pth')))
@@ -431,7 +452,8 @@ for run in range(args.runs):
     # Training begins.
     eval_metric = dataset.eval_metric
     best_valid_perf = -1E6 if 'classification' in dataset.task_type else 1E6
-    for epoch in range(start_epoch, start_epoch + args.epochs):
+    best_test_perf = None
+    for epoch in range(start_epoch, start_epoch + epochs):
         print(f"=====Run {run+1}, epoch {epoch}, {args.save_appendix}")
         print('Training...')
         loss = train(model, device, train_loader, optimizer, dataset.task_type)
@@ -479,8 +501,33 @@ for run in range(args.runs):
     with open(log_file, 'a') as f:
         print(final_res, file=f)
 
-    valid_perfs.append(best_valid_perf)
-    test_perfs.append(best_test_perf)
+
+    if args.ensemble:
+        print('Start ensemble testing...')
+        start_epoch, end_epoch, interval = args.epochs-50, args.epochs, 10
+        checkpoints = [
+            os.path.join(args.res_dir, 'run{}_model_checkpoint{}.pth'.format(run+1, x)) 
+            for x in range(start_epoch, end_epoch+1, interval)
+        ]
+        ensemble_valid_perf = eval(model, device, valid_loader, evaluator, False, 
+                                   dataset.task_type, checkpoints)[eval_metric]
+        ensemble_test_perf = eval(model, device, test_loader, evaluator, False, 
+                                  dataset.task_type, checkpoints)[eval_metric]
+        ensemble_res = '''Run {}\nEnsemble validation score: {}\nEnsemble test score: {}
+        '''.format(run+1, ensemble_valid_perf, ensemble_test_perf)
+        cmd_input = 'python ' + ' '.join(sys.argv)
+        print(cmd_input)
+        print(ensemble_res)
+        with open(log_file, 'a') as f:
+            print(ensemble_res, file=f)
+
+
+    if args.ensemble:
+        valid_perfs.append(ensemble_valid_perf)
+        test_perfs.append(ensemble_test_perf)
+    else:
+        valid_perfs.append(best_valid_perf)
+        test_perfs.append(best_test_perf)
 
 valid_perfs = torch.tensor(valid_perfs)
 test_perfs = torch.tensor(test_perfs)
