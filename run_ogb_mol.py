@@ -223,7 +223,7 @@ parser.add_argument('--h', type=int, default=None, help='hop of enclosing subgra
 parser.add_argument('--multiple_h', type=str, default=None, 
                     help='use multiple hops of enclosing subgraphs, example input:\
                     "2,3", which will overwrite h with a list [2, 3]')
-parser.add_argument('--node_label', type=str, default='hop', 
+parser.add_argument('--node_label', type=str, default='spd', 
                     help='apply labeling trick to nodes within each subgraph, use node\
                     labels as additional node features; support "hop", "drnl", "spd", \
                     for "spd", you can specify number of spd to keep by "spd3", "spd4", \

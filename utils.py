@@ -71,12 +71,18 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
             else:
                 x_ = None
 
+            if 'node_type' in data:
+                node_type_ = data.node_type[nodes_]
+
             if data.edge_attr is not None:
                 edge_attr_ = data.edge_attr[edge_mask_]
             if data.pos is not None:
                 pos_ = data.pos[nodes_]
             data_ = data.__class__(x_, edge_index_, edge_attr_, None, pos_, z=z_)
             data_.num_nodes = nodes_.shape[0]
+            
+            if 'node_type' in data:
+                data_.node_type = node_type_
 
             if use_rd:
                 adj = to_scipy_sparse_matrix(edge_index_, num_nodes=nodes_.shape[0]).tocsr()
@@ -111,7 +117,7 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
         # copy remaining graph attributes
         for k, v in data:
             if k not in ['x', 'edge_index', 'edge_attr', 'pos', 'num_nodes', 'batch',
-                         'z', 'rd']:
+                         'z', 'rd', 'node_type']:
                 new_data[k] = v
 
         if len(h) == 1:

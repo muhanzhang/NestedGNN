@@ -15,8 +15,8 @@ from torch_geometric.nn import (
 )
 from torch_geometric.utils import dropout_adj, to_dense_adj, to_dense_batch
 from utils import *
-from modules import *
-from layers import *
+from ppgn_modules import *
+from ppgn_layers import *
 
 
 class GNN(torch.nn.Module):
@@ -608,7 +608,7 @@ class k1_GNN_sep(torch.nn.Module):
         return x.view(-1)
 
 
-class k1_GNN_sub(torch.nn.Module):
+class k1_GNN_sub_old(torch.nn.Module):
     def __init__(self, dataset, num_layers=3, subgraph_pooling='mean', concat=False, 
                  use_pos=False, edge_attr_dim=5, **kwargs):
         super(k1_GNN_sub, self).__init__()
@@ -1038,22 +1038,107 @@ class NestedPPGN(torch.nn.Module):
         z = self.global_fc2(z)
         return z.view(-1)
 
+
+class k1_GNN_sub(torch.nn.Module):
+    def __init__(self, dataset, num_layers=3, cont_feat_num_layers=0, 
+                 cont_feat_start_dim=5, subgraph_pooling='mean',
+                 use_pos=False, edge_attr_dim=5, use_rd=False, 
+                 **kwargs):
+        super(k1_GNN_sub, self).__init__()
+        self.cont_feat_start_dim = cont_feat_start_dim
+        self.subgraph_pooling = subgraph_pooling
+        self.use_pos = use_pos
+        self.use_rd = use_rd
+        
+        if self.use_rd:
+            self.rd_projection = torch.nn.Linear(1, 8)
+        
+        self.z_embedding = torch.nn.Embedding(1000, 8)
+        self.node_type_embedding = torch.nn.Embedding(5, 8)
+
+        # integer node label feature
+        self.convs = torch.nn.ModuleList()
+        M_in, M_out = dataset.num_features + 8, 32
+        M_in = M_in + 3 if self.use_pos else M_in
+        nn = Sequential(Linear(edge_attr_dim, 128), ReLU(), Linear(128, M_in * M_out))
+        self.convs.append(NNConv(M_in, M_out, nn))
+
+        for i in range(num_layers-1):
+            M_in, M_out = M_out, 64
+            nn = Sequential(Linear(edge_attr_dim, 128), ReLU(), Linear(128, M_in * M_out))
+            self.convs.append(NNConv(M_in, M_out, nn))
+
+        self.fc1 = torch.nn.Linear(64, 32)
+        self.fc2 = torch.nn.Linear(32, 16)
+        self.fc3 = torch.nn.Linear(16, 1)
+
+    def forward(self, data):
+
+        # node label embedding
+        z_emb = 0
+        if 'z' in data:
+            ### computing input node embedding
+            z_emb = self.z_embedding(data.z)
+            if z_emb.ndim == 3:
+                z_emb = z_emb.sum(dim=1)
+        
+        if self.use_rd and 'rd' in data:
+            rd_proj = self.rd_projection(data.rd)
+            z_emb += rd_proj
+            
+        # integer node type embedding
+        x = self.node_type_embedding(data.node_type) + z_emb
+            
+        # concatenate with continuous node features
+        x = torch.cat([x, data.x], -1)
+        
+        if self.use_pos:
+            x = torch.cat([x, data.pos], 1)
+
+        for conv in self.convs:
+            x = F.elu(conv(x, data.edge_index, data.edge_attr))
+
+        # subgraph-level pooling
+        if self.subgraph_pooling == 'mean':
+            x = global_mean_pool(x, data.node_to_subgraph)
+        elif self.subgraph_pooling == 'center':
+            node_to_subgraph = data.node_to_subgraph.cpu().numpy()
+            # the first node of each subgraph is its center
+            _, center_indices = np.unique(node_to_subgraph, return_index=True)
+            x = x[center_indices]
+        
+        # graph-level pooling
+        x = global_mean_pool(x, data.subgraph_to_graph)
+        #x = global_add_pool(x, data.subgraph_to_graph)
+        #x = global_max_pool(x, data.subgraph_to_graph)
+
+        x = F.elu(self.fc1(x))
+        x = F.elu(self.fc2(x))
+        x = self.fc3(x)
+        return x.view(-1)
+
+
        
 class k1_GNN_sub_sep(torch.nn.Module):
     def __init__(self, dataset, num_layers=3, cont_feat_num_layers=0, 
-                 cont_feat_start_dim=5, subgraph_pooling='mean', concat=False, 
-                 use_pos=False, edge_attr_dim=5, use_ppgn=False, 
+                 cont_feat_start_dim=5, subgraph_pooling='mean',
+                 use_pos=False, edge_attr_dim=5, use_rd=False, 
                  **kwargs):
         super(k1_GNN_sub_sep, self).__init__()
         self.cont_feat_start_dim = cont_feat_start_dim
         self.subgraph_pooling = subgraph_pooling
-        self.concat = concat
         self.use_pos = use_pos
-        self.use_ppgn = use_ppgn
+        self.use_rd = use_rd
+        
+        if self.use_rd:
+            self.rd_projection = torch.nn.Linear(1, 8)
+        
+        self.z_embedding = torch.nn.Embedding(1000, 64)
+        self.node_type_embedding = torch.nn.Embedding(5, 64)
 
         # integer node label feature
         self.convs = torch.nn.ModuleList()
-        M_in, M_out = cont_feat_start_dim, 32
+        M_in, M_out = 64, 64
         nn = Sequential(Linear(edge_attr_dim, 128), ReLU(), Linear(128, M_in * M_out))
         self.convs.append(NNConv(M_in, M_out, nn))
 
@@ -1066,10 +1151,12 @@ class k1_GNN_sub_sep(torch.nn.Module):
         # continuous node features
         self.cont_feat_convs = torch.nn.ModuleList()
         if cont_feat_num_layers == 0:
-            fc_in += dataset.num_features - cont_feat_start_dim
+            fc_in += dataset.num_features
+            fc_in = fc_in + 8 if self.use_rd else fc_in
             fc_in = fc_in + 3 if self.use_pos else fc_in
         else:
-            M_in, M_out = dataset.num_features - cont_feat_start_dim, 32
+            M_in, M_out = dataset.num_features, 64
+            M_in = M_in + 8 if self.use_rd else M_in
             M_in = M_in + 3 if self.use_pos else M_in
             nn = Sequential(Linear(edge_attr_dim, 128), ReLU(), Linear(128, M_in * M_out))
             self.cont_feat_convs.append(NNConv(M_in, M_out, nn))
@@ -1080,44 +1167,41 @@ class k1_GNN_sub_sep(torch.nn.Module):
                 self.cont_feat_convs.append(NNConv(M_in, M_out, nn))
             fc_in += M_out
 
-        # ppgn modules
-        if self.use_ppgn:
-            self.ppgn_rb1 = RegularBlock(2, edge_attr_dim + 1 + dataset.num_features, 128)
-            self.ppgn_rb2 = RegularBlock(2, 128, 128)
-            self.ppgn_fc = FullyConnected(128 * 2, 64, activation_fn=None)
-            fc_in += 64
-
-        if self.concat:
-            self.fc1 = torch.nn.Linear(64 + 64*(num_layers + cont_feat_num_layers - 2), 32)
-        else:
-            self.fc1 = torch.nn.Linear(fc_in, 32)
+        self.fc1 = torch.nn.Linear(fc_in, 32)
         self.fc2 = torch.nn.Linear(32, 16)
         self.fc3 = torch.nn.Linear(16, 1)
 
     def forward(self, data):
-        # integer node label feature
-        x = data.x[:, :self.cont_feat_start_dim]
-        xs = []
+
+        # integer node label embedding
+        z_emb = 0
+        if 'z' in data:
+            ### computing input node embedding
+            z_emb = self.z_embedding(data.z)
+            if z_emb.ndim == 3:
+                z_emb = z_emb.sum(dim=1)
+
+
+        # integer node type embedding
+        x = self.node_type_embedding(data.node_type) + z_emb
+
+        # convolution for integer node features
         for conv in self.convs:
             x = F.elu(conv(x, data.edge_index, data.edge_attr))
-            if self.concat:
-                xs.append(x)
-        if self.concat:
-            x = torch.cat(xs, 1)
         x_int = x
 
-        # continuous node features
-        x = data.x[:, self.cont_feat_start_dim:]
+        # convolution for continuous node features
+        x = data.x
+        
+        if self.use_rd and 'rd' in data:
+            rd_proj = self.rd_projection(data.rd)
+            x = torch.cat([x, rd_proj], -1)
         
         if self.use_pos:
             x = torch.cat([x, data.pos], 1)
-        xs = []
+
         for conv in self.cont_feat_convs:
             x = F.elu(conv(x, data.edge_index, data.edge_attr))
-            if self.concat:
-                xs.append(x)
-        if self.concat:
-            x = torch.cat(xs, 1)
         x_cont = x
 
         x = torch.cat([x_int, x_cont], 1)
@@ -1131,43 +1215,6 @@ class k1_GNN_sub_sep(torch.nn.Module):
             _, center_indices = np.unique(node_to_subgraph, return_index=True)
             x = x[center_indices]
         
-        # ppgn features
-        if self.use_ppgn:
-            edge_adj = torch.ones(data.edge_attr.shape[0], 1).to(data.edge_attr.device)
-            edge_attr = torch.cat(
-                    [data.edge_attr[:, :4], edge_adj], 1
-            )
-            dense_edge_attr = to_dense_adj(
-                data.edge_index, data.node_to_subgraph, edge_attr
-            )  # |subgraphs| * max_nodes * max_nodes * attr_dim
-
-            # diag_node_attr
-            dense_node_attr = to_dense_batch(
-                data.x, data.node_to_subgraph
-            )[0]  # |subgraphs| * max_nodes * d
-            dense_pos = to_dense_batch(
-                data.pos, data.node_to_subgraph
-            )[0]  # |subgraphs| * max_nodes * 3
-            shape = dense_node_attr.shape
-            shape = (shape[0], shape[1], shape[1], shape[2])
-            diag_node_attr = torch.empty(*shape).to(data.edge_attr.device)
-            dense_dist_mat = torch.zeros(
-                shape[0], shape[1], shape[1], 1
-            ).to(data.edge_attr.device)
-            for g in range(shape[0]):
-                g_dist_mat = dist.squareform(dist.pdist(dense_pos[g].cpu().numpy()))
-                g_dist_mat = torch.tensor(g_dist_mat).unsqueeze(0).to(data.edge_attr.device)
-                dense_dist_mat[g, :, :, 0] = g_dist_mat
-                for i in range(shape[-1]):
-                    diag_node_attr[g, :, :, i] = torch.diag(dense_node_attr[g, :, i])
-            z = torch.cat([dense_edge_attr, dense_dist_mat, diag_node_attr], -1)
-            z = torch.transpose(z, 1, 3)
-            z = self.ppgn_rb1(z)
-            z = self.ppgn_rb2(z)
-            z = diag_offdiag_maxpool(z)
-            z = self.ppgn_fc(z)
-            x = torch.cat([x, z], 1)
-
         # graph-level pooling
         x = global_mean_pool(x, data.subgraph_to_graph)
         #x = global_add_pool(x, data.subgraph_to_graph)

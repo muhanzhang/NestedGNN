@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch_sparse import coalesce
 from torch_geometric.data import (InMemoryDataset, download_url, extract_zip,
                                   Data)
+from tqdm import tqdm
 
 try:
     import rdkit
@@ -19,7 +20,7 @@ try:
     rdBase.DisableLog('rdApp.error')
 except ImportError:
     rdkit = None
-rdkit = None # always use processed version
+#rdkit = None # always use processed version
 
 HAR2EV = 27.2113825435
 KCALMOL2EV = 0.04336414
@@ -107,8 +108,9 @@ class QM9(InMemoryDataset):
         bonds = {BT.SINGLE: 0, BT.DOUBLE: 1, BT.TRIPLE: 2, BT.AROMATIC: 3}
 
     def __init__(self, root, transform=None, pre_transform=None,
-                 pre_filter=None, skip_collate=False):
+                 pre_filter=None, skip_collate=False, one_hot_atom=True):
         self.skip_collate = skip_collate
+        self.one_hot_atom = one_hot_atom
         super(QM9, self).__init__(root, transform, pre_transform, pre_filter)
         if self.skip_collate:
             self.data = torch.load(self.processed_paths[0])
@@ -158,7 +160,11 @@ class QM9(InMemoryDataset):
                 data_list = [d for d in data_list if self.pre_filter(d)]
 
             if self.pre_transform is not None:
-                data_list = [self.pre_transform(d) for d in data_list]
+                new_data_list = []
+                for data in tqdm(data_list, ncols=70):
+                    new_data_list.append(self.pre_transform(data))
+                del data_list
+                data_list = new_data_list
 
             if self.skip_collate:
                 torch.save(data_list, self.processed_paths[0])
@@ -184,7 +190,7 @@ class QM9(InMemoryDataset):
         factory = ChemicalFeatures.BuildFeatureFactory(fdef_name)
 
         data_list = []
-        for i, mol in enumerate(suppl):
+        for i, mol in tqdm(enumerate(suppl), ncols=70):
             if mol is None:
                 continue
             if i in skip:
@@ -229,11 +235,16 @@ class QM9(InMemoryDataset):
                     for k in node_list:
                         acceptor[k] = 1
 
-            x1 = F.one_hot(torch.tensor(type_idx), num_classes=len(self.types))
             x2 = torch.tensor([
                 atomic_number, acceptor, donor, aromatic, sp, sp2, sp3, num_hs
             ], dtype=torch.float).t().contiguous()
-            x = torch.cat([x1.to(torch.float), x2], dim=-1)
+            if self.one_hot_atom:
+                x1 = F.one_hot(torch.tensor(type_idx), num_classes=len(self.types))
+                x = torch.cat([x1.to(torch.float), x2], dim=-1)
+            else:
+                node_type = torch.tensor(type_idx)
+                x = x2
+                
 
             row, col, bond_idx = [], [], []
             for bond in mol.GetBonds():
@@ -253,6 +264,8 @@ class QM9(InMemoryDataset):
 
             data = Data(x=x, pos=pos, edge_index=edge_index,
                         edge_attr=edge_attr, y=y, name=name)
+            if not self.one_hot_atom:
+                data.node_type = node_type
 
             if self.pre_filter is not None and not self.pre_filter(data):
                 continue

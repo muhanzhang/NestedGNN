@@ -50,7 +50,7 @@ class MyTransform(object):
         return data
 
 
-parser = argparse.ArgumentParser()
+parser = argparse.ArgumentParser(description='Nested GNN')
 parser.add_argument('--model', type=str, default='k1_GNN')
 parser.add_argument('--target', default=0)
 parser.add_argument('--convert', type=str, default='post',
@@ -71,18 +71,23 @@ parser.add_argument('--batch_size', type=int, default=64)
 parser.add_argument('--layers', type=int, default=3)
 parser.add_argument('--cont_layers', type=int, default=0, 
                     help='for sep models, # of conv layers for continuous features')
-parser.add_argument('--subgraph', action='store_true', default=False, 
-                    help='whether to use SubgraphConv')
-parser.add_argument('--h', type=int, default=1, help='hop of enclosing subgraph')
-parser.add_argument('--use_hop_label', action='store_true', default=False, 
-                    help='use one-hot encoding of which hop a node is included in \
-                    the enclosing subgraph as additional node features')
+
+# NestedGNN settings
+parser.add_argument('--h', type=int, default=None, help='hop of enclosing subgraph;\
+                    if None, will not use NestedGNN')
 parser.add_argument('--multiple_h', type=str, default=None, 
                     help='use multiple hops of enclosing subgraphs, example input:\
                     "2,3", which will overwrite h with a list [2, 3]')
+parser.add_argument('--node_label', type=str, default='spd', 
+                    help='apply labeling trick to nodes within each subgraph, use node\
+                    labels as additional node features; support "hop", "drnl", "spd", \
+                    for "spd", you can specify number of spd to keep by "spd3", "spd4", \
+                    "spd5", etc. Default "spd"=="spd2".')
+parser.add_argument('--use_rd', action='store_true', default=False, 
+                    help='use resistance distance as additional node labels')
 parser.add_argument('--subgraph_pooling', default='mean')
-parser.add_argument('--concat', action='store_true', default=False, 
-                    help='concat x from all conv layers')
+
+
 parser.add_argument('--use_pos', action='store_true', default=False, 
                     help='use node position (3D) as continuous node features')
 parser.add_argument('--use_relative_pos', action='store_true', default=False, 
@@ -98,10 +103,9 @@ parser.add_argument('--save_appendix', default='',
                     help='what to append to save-names when saving results')
 parser.add_argument('--keep_old', action='store_true', default=False,
                     help='if True, do not overwrite old .py files in the result folder')
-parser.add_argument('--reprocess', action='store_true', default=False,
-                    help='if True, reprocess data')
-parser.add_argument('--cpu', action='store_true', default=False, help='use cpu')
 args = parser.parse_args()
+
+device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
 torch.manual_seed(args.seed)
 if torch.cuda.is_available():
@@ -109,22 +113,22 @@ if torch.cuda.is_available():
 random.seed(args.seed)
 np.random.seed(args.seed)
 
+
 if args.multiple_h is not None:
     args.h = [int(h) for h in args.multiple_h.split(',')]
 
 
-file_dir = os.path.dirname(os.path.realpath('__file__'))
-args.res_dir = os.path.join(
-    file_dir, 'results/QM9_{}{}'.format(args.target, args.save_appendix)
-)
+if args.save_appendix == '':
+    args.save_appendix = '_' + time.strftime("%Y%m%d%H%M%S")
+args.res_dir = 'results/QM9_{}{}'.format(args.target, args.save_appendix)
+print('Results will be saved in ' + args.res_dir)
 if not os.path.exists(args.res_dir):
     os.makedirs(args.res_dir) 
-if not args.keep_old:
-    # backup current main.py, model.py files
-    copy('run_qm9.py', args.res_dir)
-    copy('utils.py', args.res_dir)
-    copy('models.py', args.res_dir)
-# save command line input
+# Backup python files.
+copy('run_qm9.py', args.res_dir)
+copy('utils.py', args.res_dir)
+copy('models.py', args.res_dir)
+# Save command line input.
 cmd_input = 'python ' + ' '.join(sys.argv) + '\n'
 with open(os.path.join(args.res_dir, 'cmd_input.txt'), 'a') as f:
     f.write(cmd_input)
@@ -134,24 +138,24 @@ print('Command line input: ' + cmd_input + ' is saved.')
 target = int(args.target)
 print('---- Target: {} ----'.format(target))
 
-path = osp.join(osp.dirname(osp.realpath(__file__)), 'data', 'QM9')
+path = 'data/QM9'
 pre_transform = None
-if args.subgraph:
+if args.h is not None:
     if type(args.h) == int:
-        path += '_sg_' + str(args.h)
+        path += '/ngnn_h' + str(args.h)
     elif type(args.h) == list:
-        path += '_sg_' + ''.join(str(h) for h in args.h)
-    if args.use_hop_label:
-        path += '_hoplabel'
-    pre_transform = lambda x: create_subgraphs(x, args.h, args.use_hop_label)
-    if args.multiple_h and args.use_relative_pos:
-        path += '_relativepos'
+        path += '/ngnn_h' + ''.join(str(h) for h in args.h)
+    path += '_' + args.node_label
+    if args.use_rd:
+        path += '_rd'
+    def pre_transform(g):
+        return create_subgraphs(g, args.h, node_label=args.node_label, 
+                                use_rd=args.use_rd)
+
 pre_filter = None
 if args.filter:
     pre_filter = MyFilter()
     path += '_filtered'
-if args.reprocess and os.path.isdir(path):
-    rmtree(path)
 
 if args.multiple_h is not None:
     dataset = QM9(
@@ -161,7 +165,8 @@ if args.multiple_h is not None:
             [pre_transform, Distance(relative_pos=args.use_relative_pos)]
         ), 
         pre_filter=pre_filter, 
-        skip_collate=args.multiple_h is not None, 
+        skip_collate=True, 
+        one_hot_atom=False, 
     )
 else:
     dataset = QM9(
@@ -176,12 +181,12 @@ else:
         ), 
         pre_transform=pre_transform, 
         pre_filter=pre_filter, 
-        skip_collate=args.multiple_h is not None, 
+        skip_collate=False, 
+        one_hot_atom=False, 
     )
 
 dataset = dataset.shuffle()
 
-device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
 
 if False:  # visualize some graphs
     import networkx as nx
@@ -233,10 +238,10 @@ train_dataset = dataset[2 * tenpercent:]
 if args.multiple_h is not None:
     cont_feat_start_dim = {}
     for h in args.h:
-        cont_feat_start_dim[h] = 5 if not args.use_hop_label else 5 + h + 1
+        cont_feat_start_dim[h] = 5
         
 else:
-    cont_feat_start_dim = 5 if not args.use_hop_label else 5 + args.h + 1
+    cont_feat_start_dim = 5
 
 if args.normalize_x:
     x_mean = train_dataset.data.x[:, cont_feat_start_dim:].mean(dim=0)
@@ -258,12 +263,12 @@ kwargs = {
     'subgraph_pooling': args.subgraph_pooling, 
     #'num_h': len(args.h) if type(args.h) == list else 1, 
     'hs': args.h, 
-    'concat': args.concat, 
     'use_pos': args.use_pos, 
     'cont_feat_start_dim': cont_feat_start_dim, 
     'edge_attr_dim': 8 if args.use_relative_pos else 5, 
     'use_ppgn': args.use_ppgn, 
     'use_max_dist': args.use_max_dist, 
+    'use_rd': args.use_rd, 
 }
 if True:
     model = eval(args.model)(dataset, **kwargs)
@@ -369,11 +374,12 @@ def loop(start=1, best_val_error=None):
     model_name = os.path.join(args.res_dir, 'model_checkpoint{}.pth'.format(epoch))
     torch.save(model.state_dict(), model_name)
     start = epoch + 1
-    return start, best_val_error
+    return start, best_val_error, log
 
 best_val_error = None
 start = 1
 while True:
-    start, best_val_error = loop(start, best_val_error)
-    print(cmd_input)
+    start, best_val_error, log = loop(start, best_val_error)
+    print(cmd_input[:-1])
+    print(log)
     pdb.set_trace()
