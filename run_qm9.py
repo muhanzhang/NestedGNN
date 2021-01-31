@@ -18,6 +18,8 @@ from qm9 import QM9  # replace with the latest correct QM9 from master
 from dataloader import DataLoader  # replace with custom dataloader to handle subgraphs
 from distance import Distance  # replace with custom Distance for original_edge_attr and multiple_h
 
+from k_gnn import GraphConv, avg_pool
+from k_gnn import TwoMalkin, ConnectedThreeMalkin
 
 # The units provided by PyG QM9 are not consistent with their original units.
 # Below are meta data for unit conversion of each target task. We do unit conversion
@@ -33,6 +35,16 @@ conversion = torch.tensor([
 class MyFilter(object):
     def __call__(self, data):
         return data.num_nodes > 6  # Remove graphs with less than 6 nodes.
+
+
+class MyPreTransform(object):
+    def __call__(self, data):
+        x = data.x
+        data.x = data.x[:, :5]
+        data = TwoMalkin()(data)
+        data = ConnectedThreeMalkin()(data)
+        data.x = x
+        return data
 
 
 class MyTransform(object):
@@ -139,6 +151,10 @@ target = int(args.target)
 print('---- Target: {} ----'.format(target))
 
 path = 'data/QM9'
+if args.model.startswith('k123_GNN'):
+    path = 'data/1-2-3-QM9'
+elif args.model.startswith('k12_GNN'):
+    path = 'data/1-2-QM9'
 pre_transform = None
 if args.h is not None:
     if type(args.h) == int:
@@ -148,9 +164,18 @@ if args.h is not None:
     path += '_' + args.node_label
     if args.use_rd:
         path += '_rd'
+    if args.model.startswith('k12'):
+        subgraph_pretransform = MyPreTransform()
+    else:
+        subgraph_pretransform = None
+
     def pre_transform(g):
         return create_subgraphs(g, args.h, node_label=args.node_label, 
-                                use_rd=args.use_rd)
+                                use_rd=args.use_rd,
+                                subgraph_pretransform=subgraph_pretransform)
+        
+elif args.model.startswith('k12'):
+    pre_transform = MyPreTransform()
 
 pre_filter = None
 if args.filter:
@@ -187,6 +212,15 @@ else:
 
 dataset = dataset.shuffle()
 
+if False:  # do some statistics
+    loader = DataLoader(dataset, batch_size=1, shuffle=False)
+    n_nodes = [data.num_nodes for data in tqdm(loader)]
+    n_edges = [data.edge_index.shape[1]/2 for data in tqdm(loader)]
+    print(f'Avg #nodes: {np.mean(n_nodes)}, avg #edges: {np.mean(n_edges)}')
+    from torch_geometric.utils import degree
+    avg_deg = torch.cat([degree(data.edge_index[0], data.num_nodes) for data in tqdm(loader)]).mean()
+    print(f'Avg node degree: {avg_deg}')
+    pdb.set_trace()
 
 if False:  # visualize some graphs
     import networkx as nx

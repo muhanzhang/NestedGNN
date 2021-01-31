@@ -47,7 +47,7 @@ class return_prob(object):
             
 
 def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
-                     node_label='hop', use_rd=False):
+                     node_label='hop', use_rd=False, subgraph_pretransform=None):
     # Given a PyG graph data, extract an h-hop enclosing subgraph for each of its
     # nodes, and combine these node-subgraphs into a new large disconnected graph
 
@@ -95,6 +95,13 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
                 rd_to_x = torch.FloatTensor((lxx + lyy - lxy - lyx)).unsqueeze(1)
                 data_.rd = rd_to_x
 
+            if subgraph_pretransform is not None:
+                data_ = subgraph_pretransform(data_)
+                if 'assignment_index_2' in data_:
+                    data_.batch_2 = torch.zeros(data_.iso_type_2.shape[0], dtype=torch.long)
+                if 'assignment_index_3' in data_:
+                    data_.batch_3 = torch.zeros(data_.iso_type_3.shape[0], dtype=torch.long)
+
             subgraphs.append(data_)
 
         # new_data is a treated as a big disconnected graph of the batch of subgraphs
@@ -109,7 +116,9 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
             
         # rename batch, because batch will be used to store node_to_graph assignment
         new_data.node_to_subgraph = new_data.batch
-        del new_data.batch
+        new_data.assignment2_to_subgraph = new_data.batch_2
+        new_data.assignment3_to_subgraph = new_data.batch_3
+        del new_data.batch, new_data.batch_2, new_data.batch_3
 
         # create a subgraph_to_graph assignment vector (all zero)
         new_data.subgraph_to_graph = torch.zeros(len(subgraphs), dtype=torch.long)

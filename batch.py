@@ -43,6 +43,10 @@ class Batch(Data):
             batch['{}_batch'.format(key)] = []
 
         cumsum = {key: 0 for key in keys}
+        if 'assignment_index_2' in keys:
+            cumsum['assignment_index_2'] = torch.LongTensor([[0], [0]])
+        if 'assignment_index_3' in keys:
+            cumsum['assignment_index_3'] = torch.LongTensor([[0], [0]])
         batch.batch = []
         for i, data in enumerate(data_list):
             for key in data.keys:
@@ -54,7 +58,6 @@ class Batch(Data):
                 else:
                     size = 1
                 batch.__slices__[key].append(size + batch.__slices__[key][-1])
-
                 if key == 'node_to_subgraph':
                     cumsum[key] = cumsum[key] + data.num_subgraphs
                 elif key == 'subgraph_to_graph':
@@ -65,6 +68,22 @@ class Batch(Data):
                     cumsum[key] = cumsum[key] + data.num_cliques
                 elif key == 'atom2clique_index':
                     cumsum[key] = cumsum[key] + torch.tensor([[data.num_atoms], [data.num_cliques]])
+                elif key == 'edge_index_2':
+                    cumsum[key] = cumsum[key] + data.iso_type_2.shape[0]
+                elif key == 'edge_index_3':
+                    cumsum[key] = cumsum[key] + data.iso_type_3.shape[0]
+                elif key == 'batch_2':
+                    cumsum[key] = cumsum[key] + 1
+                elif key == 'batch_3':
+                    cumsum[key] = cumsum[key] + 1
+                elif key == 'assignment2_to_subgraph':
+                    cumsum[key] = cumsum[key] + data.num_subgraphs
+                elif key == 'assignment3_to_subgraph':
+                    cumsum[key] = cumsum[key] + data.num_subgraphs
+                elif key == 'assignment_index_2':
+                    cumsum[key] = cumsum[key] + torch.LongTensor([[data.num_nodes], [data.iso_type_2.shape[0]]])
+                elif key == 'assignment_index_3':
+                    cumsum[key] = cumsum[key] + torch.LongTensor([[data.iso_type_2.shape[0]], [data.iso_type_3.shape[0]]])
                 else:
                     cumsum[key] = cumsum[key] + data.__inc__(key, item)
                 batch[key].append(item)
@@ -115,6 +134,10 @@ class Batch(Data):
 
         keys = [key for key in self.keys if key[-5:] != 'batch']
         cumsum = {key: 0 for key in keys}
+        if 'assignment_index_2' in keys:
+            cumsum['assignment_index_2'] = torch.LongTensor([[0], [0]])
+        if 'assignment_index_3' in keys:
+            cumsum['assignment_index_3'] = torch.LongTensor([[0], [0]])
         data_list = []
         for i in range(len(self.__slices__[keys[0]]) - 1):
             data = self.__data_class__()
@@ -139,6 +162,22 @@ class Batch(Data):
                     cumsum[key] = cumsum[key] + data.num_cliques
                 elif key == 'atom2clique_index':
                     cumsum[key] = cumsum[key] + torch.tensor([[data.num_atoms], [data.num_cliques]])
+                elif key == 'edge_index_2':
+                    cumsum[key] = cumsum[key] + data.iso_type_2.shape[0]
+                elif key == 'edge_index_3':
+                    cumsum[key] = cumsum[key] + data.iso_type_3.shape[0]
+                elif key == 'batch_2':
+                    cumsum[key] = cumsum[key] + 1
+                elif key == 'batch_3':
+                    cumsum[key] = cumsum[key] + 1
+                elif key == 'assignment2_to_subgraph':
+                    cumsum[key] = cumsum[key] + data.num_subgraphs
+                elif key == 'assignment3_to_subgraph':
+                    cumsum[key] = cumsum[key] + data.num_subgraphs
+                elif key == 'assignment_index_2':
+                    cumsum[key] = cumsum[key] + torch.LongTensor([[data.num_nodes], [data.iso_type_2.shape[0]]])
+                elif key == 'assignment_index_3':
+                    cumsum[key] = cumsum[key] + torch.LongTensor([[data.iso_type_2.shape[0]], [data.iso_type_3.shape[0]]])
                 else:
                     cumsum[key] = cumsum[key] + data.__inc__(key, data[key])
             data_list.append(data)

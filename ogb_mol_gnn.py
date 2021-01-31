@@ -35,9 +35,8 @@ class GNN(torch.nn.Module):
     def __init__(self, dataset, num_tasks, num_layer=5, emb_dim=300, gnn_type='gin', 
                  virtual_node=True, residual=False, drop_ratio=0.5, JK="last", 
                  graph_pooling="mean", subgraph_pooling="mean", 
-                 center_pool_virtual=False, 
-                 use_rd=False, 
-                 use_rp=None, **kwargs):
+                 center_pool_virtual=False, use_rd=False, use_rp=None, 
+                 nonlinear_after_subpool=False, **kwargs):
         '''
             num_tasks (int): number of labels to be predicted
             virtual_node (bool): whether to add virtual node or not
@@ -55,6 +54,7 @@ class GNN(torch.nn.Module):
         self.center_pool_virtual = center_pool_virtual
         self.use_rd = use_rd
         self.use_rp = use_rp
+        self.nonlinear_after_subpool = nonlinear_after_subpool
 
         #if self.num_layer < 2:
         #    raise ValueError("Number of GNN layers must be greater than 1.")
@@ -118,12 +118,23 @@ class GNN(torch.nn.Module):
             self.subpool = center_pool
         else:
             self.subpool = None
+            
+        if self.nonlinear_after_subpool:
+            self.mlp = torch.nn.Sequential(
+                torch.nn.Linear(self.emb_dim, self.emb_dim), 
+                torch.nn.ReLU(),  
+                torch.nn.Linear(self.emb_dim, self.emb_dim)
+            )
 
     def forward(self, data, perturb=None):
         x = self.gnn_node(data, perturb=perturb)
 
         if 'node_to_subgraph' in data and 'subgraph_to_graph' in data:
             x = self.subpool(x, data.node_to_subgraph)
+
+            if self.nonlinear_after_subpool:
+                x = self.mlp(x)
+
             if self.graph_pooling == 'sort':
                 x = global_sort_pool(x, data.subgraph_to_graph, self.k)
                 x = x.unsqueeze(1)  # num_graphs * 1 * (k*hidden)

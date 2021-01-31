@@ -247,6 +247,7 @@ parser.add_argument('--sum_multi_hop_embedding', action='store_true', default=Fa
 parser.add_argument('--graph_pooling', type=str, default="mean")
 parser.add_argument('--subgraph_pooling', type=str, default="mean")
 parser.add_argument('--center_pool_virtual', action='store_true', default=False) 
+parser.add_argument('--nonlinear_after_subpool', action='store_true', default=False) 
 parser.add_argument('--emb_dim', type=int, default=300,
                     help='dimensionality of hidden units in GNNs (default: 300)')
 parser.add_argument('--batch_size', type=int, default=32,
@@ -384,6 +385,7 @@ kwargs = {
         'num_layer': args.num_layer, 
         'residual': args.residual, 
         'center_pool_virtual': args.center_pool_virtual, 
+        'nonlinear_after_subpool': args.nonlinear_after_subpool, 
         # required when using multiple_h
         'num_more_layer': args.num_more_layer, 
         'hs': args.h, 
@@ -471,14 +473,14 @@ for run in range(start_run, start_run + runs):
                 best_test_perf = eval(model, device, test_loader, evaluator, False, 
                                       dataset.task_type)[eval_metric]
                 torch.save(model.state_dict(), 
-                           os.path.join(args.res_dir, 'best_model.pth'))
+                           os.path.join(args.res_dir, f'run{run+1}_best_model.pth'))
         else:
             if valid_perf < best_valid_perf:
                 best_valid_perf = valid_perf
                 best_test_perf = eval(model, device, test_loader, evaluator, False, 
                                       dataset.task_type)[eval_metric]
                 torch.save(model.state_dict(), 
-                           os.path.join(args.res_dir, 'best_model.pth'))
+                           os.path.join(args.res_dir, f'run{run+1}_best_model.pth'))
         if args.scheduler:
             scheduler.step()
 
