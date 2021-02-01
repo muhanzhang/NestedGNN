@@ -1071,7 +1071,7 @@ class k13_GNN_sub(torch.nn.Module):
         nn3 = Sequential(Linear(5, 128), ReLU(), Linear(128, M_in * M_out))
         self.conv3 = NNConv(M_in, M_out, nn3)
 
-        self.conv6 = GraphConv(64 + num_i_3, 64)
+        self.conv6 = GraphConv(64 + self.num_i_3, 64)
         self.conv7 = GraphConv(64, 64)
 
         self.fc1 = torch.nn.Linear(2 * 64, 64)

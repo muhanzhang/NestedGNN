@@ -116,9 +116,13 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
             
         # rename batch, because batch will be used to store node_to_graph assignment
         new_data.node_to_subgraph = new_data.batch
-        new_data.assignment2_to_subgraph = new_data.batch_2
-        new_data.assignment3_to_subgraph = new_data.batch_3
-        del new_data.batch, new_data.batch_2, new_data.batch_3
+        del new_data.batch
+        if 'batch_2' in new_data:
+            new_data.assignment2_to_subgraph = new_data.batch_2
+            del new_data.batch_2
+        if 'batch_3' in new_data:
+            new_data.assignment3_to_subgraph = new_data.batch_3
+            del new_data.batch_3
 
         # create a subgraph_to_graph assignment vector (all zero)
         new_data.subgraph_to_graph = torch.zeros(len(subgraphs), dtype=torch.long)

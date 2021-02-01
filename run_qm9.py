@@ -200,7 +200,7 @@ if args.h is not None:
                                 subgraph_pretransform=subgraph_pretransform)
         
 elif (args.model.startswith('k123') or args.model.startswith('k13') or 
-      args.model.startswith('k12'):
+      args.model.startswith('k12')):
     pre_transform = subgraph_pretransform
 
 pre_filter = None

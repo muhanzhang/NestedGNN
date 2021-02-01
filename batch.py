@@ -83,7 +83,8 @@ class Batch(Data):
                 elif key == 'assignment_index_2':
                     cumsum[key] = cumsum[key] + torch.LongTensor([[data.num_nodes], [data.iso_type_2.shape[0]]])
                 elif key == 'assignment_index_3':
-                    cumsum[key] = cumsum[key] + torch.LongTensor([[data.iso_type_2.shape[0]], [data.iso_type_3.shape[0]]])
+                    inc = data.iso_type_2.shape[0] if 'assignment_index_2' in data else data.num_nodes
+                    cumsum[key] = cumsum[key] + torch.LongTensor([[inc], [data.iso_type_3.shape[0]]])
                 else:
                     cumsum[key] = cumsum[key] + data.__inc__(key, item)
                 batch[key].append(item)
