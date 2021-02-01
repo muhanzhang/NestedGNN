@@ -134,14 +134,20 @@ class QM9(InMemoryDataset):
             extract_zip(file_path, self.raw_dir)
             os.unlink(file_path)
         else:
-            file_path = download_url(self.raw_url, self.raw_dir)
-            extract_zip(file_path, self.raw_dir)
-            os.unlink(file_path)
+            if os.path.isfile('data/qm9.zip'):
+                extract_zip('data/qm9.zip', self.raw_dir)
+            else:
+                file_path = download_url(self.raw_url, self.raw_dir)
+                extract_zip(file_path, self.raw_dir)
+                os.unlink(file_path)
 
-            file_path = download_url(self.raw_url2, self.raw_dir)
-            os.rename(
-                osp.join(self.raw_dir, '3195404'),
-                osp.join(self.raw_dir, 'uncharacterized.txt'))
+            if os.path.isfile('data/uncharacterized.txt'):
+                shutil.copy('data/uncharacterized.txt', self.raw_dir)
+            else:
+                file_path = download_url(self.raw_url2, self.raw_dir)
+                os.rename(
+                    osp.join(self.raw_dir, '3195404'),
+                    osp.join(self.raw_dir, 'uncharacterized.txt'))
 
     def process(self):
         if rdkit is None:

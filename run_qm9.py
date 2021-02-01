@@ -37,12 +37,30 @@ class MyFilter(object):
         return data.num_nodes > 6  # Remove graphs with less than 6 nodes.
 
 
-class MyPreTransform(object):
+class k123PreTransform(object):
     def __call__(self, data):
         x = data.x
         data.x = data.x[:, :5]
         data = TwoMalkin()(data)
         data = ConnectedThreeMalkin()(data)
+        data.x = x
+        return data
+
+
+class k13PreTransform(object):
+    def __call__(self, data):
+        x = data.x
+        data.x = data.x[:, :5]
+        data = ConnectedThreeMalkin()(data)
+        data.x = x
+        return data
+
+
+class k12PreTransform(object):
+    def __call__(self, data):
+        x = data.x
+        data.x = data.x[:, :5]
+        data = TwoMalkin()(data)
         data.x = x
         return data
 
@@ -155,6 +173,18 @@ if args.model.startswith('k123_GNN'):
     path = 'data/1-2-3-QM9'
 elif args.model.startswith('k12_GNN'):
     path = 'data/1-2-QM9'
+elif args.model.startswith('k13_GNN'):
+    path = 'data/1-3-QM9'
+
+if args.model.startswith('k123'):
+    subgraph_pretransform = k123PreTransform()
+elif args.model.startswith('k13'):
+    subgraph_pretransform = k13PreTransform()
+elif args.model.startswith('k12'):
+    subgraph_pretransform = k12PreTransform()
+else:
+    subgraph_pretransform = None
+
 pre_transform = None
 if args.h is not None:
     if type(args.h) == int:
@@ -164,18 +194,14 @@ if args.h is not None:
     path += '_' + args.node_label
     if args.use_rd:
         path += '_rd'
-    if args.model.startswith('k12'):
-        subgraph_pretransform = MyPreTransform()
-    else:
-        subgraph_pretransform = None
-
     def pre_transform(g):
         return create_subgraphs(g, args.h, node_label=args.node_label, 
                                 use_rd=args.use_rd,
                                 subgraph_pretransform=subgraph_pretransform)
         
-elif args.model.startswith('k12'):
-    pre_transform = MyPreTransform()
+elif (args.model.startswith('k123') or args.model.startswith('k13') or 
+      args.model.startswith('k12'):
+    pre_transform = subgraph_pretransform
 
 pre_filter = None
 if args.filter:
