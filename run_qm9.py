@@ -438,8 +438,13 @@ def loop(start=1, best_val_error=None):
 
 best_val_error = None
 start = 1
+start, best_val_error, log = loop(start, best_val_error)
+print(cmd_input[:-1])
+print(log)
+'''
 while True:
     start, best_val_error, log = loop(start, best_val_error)
     print(cmd_input[:-1])
     print(log)
     pdb.set_trace()
+'''
