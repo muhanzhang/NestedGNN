@@ -194,7 +194,7 @@ def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
         hop = hop[hop != 0]
         hop = torch.cat([torch.LongTensor([0], device=row.device), hop])
         z = hop.unsqueeze(1)
-    else:
+    elif node_label.startswith('spd') or node_label == 'drnl':
         if node_label.startswith('spd'):
             num_spd = int(node_label[3:]) if len(node_label) > 3 else 2
             z = torch.zeros([subset.size(0), num_spd], dtype=torch.long, device=row.device)
