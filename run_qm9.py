@@ -98,7 +98,7 @@ parser.add_argument('--use_max_dist', action='store_true', default=False,
                     help='use maximum distance between all nodes as a global feature')
 parser.add_argument('--epochs', type=int, default=200)
 parser.add_argument('--batch_size', type=int, default=64)
-parser.add_argument('--layers', type=int, default=3)
+parser.add_argument('--layers', type=int, default=5)
 parser.add_argument('--cont_layers', type=int, default=0, 
                     help='for sep models, # of conv layers for continuous features')
 
