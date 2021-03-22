@@ -11,8 +11,8 @@ import numpy as np
 from kernel.datasets import get_dataset
 from kernel.train_eval import cross_validation_with_val_set
 from kernel.train_eval import cross_validation_without_val_set
-from kernel.gcn import GCN
-from kernel.graph_sage import GraphSAGE, GraphSAGEWithoutJK
+from kernel.gcn import *
+from kernel.graph_sage import *
 from kernel.gin import *
 from kernel.graclus import Graclus
 from kernel.top_k import TopK
