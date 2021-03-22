@@ -16,7 +16,7 @@ class NestedGIN(torch.nn.Module):
                 BN(hidden),
                 ReLU(),
             ),
-            train_eps=False)
+            train_eps=True)
         self.convs = torch.nn.ModuleList()
         for i in range(num_layers - 1):
             self.convs.append(
@@ -29,7 +29,7 @@ class NestedGIN(torch.nn.Module):
                         BN(hidden), 
                         ReLU(),
                     ),
-                    train_eps=False))
+                    train_eps=True))
         self.lin1 = torch.nn.Linear(num_layers * hidden, hidden)
         self.lin2 = Linear(hidden, dataset.num_classes)
 

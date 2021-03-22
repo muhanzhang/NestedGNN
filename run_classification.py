@@ -106,8 +106,9 @@ if args.data == 'all':
     #datasets = ['MUTAG', 'PROTEINS', 'IMDB-BINARY', 'REDDIT-BINARY']
     #datasets += ['DD', 'COLLAB']
     #datasets = ['MUTAG', 'DD', 'PROTEINS', 'IMDB-BINARY', 'REDDIT-BINARY']
-    datasets = ['MUTAG', 'PROTEINS', 'IMDB-BINARY']
-    #datasets = ['MUTAG', 'DD']
+    #datasets = ['MUTAG', 'PROTEINS', 'IMDB-BINARY']
+    datasets = ['DD']
+    #datasets = ['REDDIT-BINARY']
 else:
     datasets = [args.data]
 
@@ -141,7 +142,7 @@ else:
     SortPool,
 '''
 if args.model == 'all':
-    nets = [GIN0, NestedGIN]
+    nets = [GIN, NestedGIN]
 else:
     nets = [eval(args.model)]
 
