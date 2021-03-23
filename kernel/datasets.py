@@ -2,11 +2,13 @@ import os.path as osp
 import sys, os
 from shutil import rmtree
 import torch
-from torch_geometric.datasets import TUDataset
+#from torch_geometric.datasets import TUDataset
 from torch_geometric.utils import degree
 import torch_geometric.transforms as T
 sys.path.append('%s/../' % os.path.dirname(os.path.realpath(__file__)))
+sys.path.append('%s/' % os.path.dirname(os.path.realpath(__file__)))
 from utils import create_subgraphs, return_prob
+from tu_dataset import TUDataset
 
 
 class NormalizedDegree(object):

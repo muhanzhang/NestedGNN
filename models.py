@@ -434,18 +434,21 @@ class PPGN(torch.nn.Module):
 
 class k1_GNN(torch.nn.Module):
     def __init__(self, dataset, num_layers=3, concat=False, use_pos=False, 
-                 edge_attr_dim=5, use_ppgn=False, use_max_dist=False, **kwargs):
+                 edge_attr_dim=5, use_ppgn=False, use_max_dist=False, 
+                 RNI=False, **kwargs):
         super(k1_GNN, self).__init__()
         self.concat = concat
         self.use_pos = use_pos
         self.use_ppgn = use_ppgn
         self.use_max_dist = use_max_dist
+        self.RNI = RNI
         self.convs = torch.nn.ModuleList()
 
         fc_in = 0
 
         M_in, M_out = dataset.num_features, 32
         M_in = M_in + 3 if self.use_pos else M_in
+        M_in = M_in * 2 if self.RNI else M_in
         nn = Sequential(Linear(edge_attr_dim, 128), ReLU(), Linear(128, M_in * M_out))
         self.convs.append(NNConv(M_in, M_out, nn))
 
@@ -478,6 +481,9 @@ class k1_GNN(torch.nn.Module):
         x = data.x
         if self.use_pos:
             x = torch.cat([x, data.pos], 1)
+        if self.RNI:
+            rand_x = torch.rand(*x.size()).to(x.device) * 2 - 1
+            x = torch.cat([x, rand_x], 1)
         xs = []
         for conv in self.convs:
             x = F.elu(conv(x, data.edge_index, data.edge_attr))
@@ -1330,12 +1336,13 @@ class k123_GNN_sub(torch.nn.Module):
 class k1_GNN_sub(torch.nn.Module):
     def __init__(self, dataset, num_layers=3, 
                  subgraph_pooling='mean',
-                 use_pos=False, edge_attr_dim=5, use_rd=False, 
+                 use_pos=False, edge_attr_dim=5, use_rd=False, RNI=False, 
                  **kwargs):
         super(k1_GNN_sub, self).__init__()
         self.subgraph_pooling = subgraph_pooling
         self.use_pos = use_pos
         self.use_rd = use_rd
+        self.RNI = RNI
         
         if self.use_rd:
             self.rd_projection = torch.nn.Linear(1, 8)
@@ -1347,6 +1354,7 @@ class k1_GNN_sub(torch.nn.Module):
         self.convs = torch.nn.ModuleList()
         M_in, M_out = dataset.num_features + 8, 32
         M_in = M_in + 3 if self.use_pos else M_in
+        M_in = M_in * 2 if self.RNI else M_in
         nn = Sequential(Linear(edge_attr_dim, 128), ReLU(), Linear(128, M_in * M_out))
         self.convs.append(NNConv(M_in, M_out, nn))
 
@@ -1381,6 +1389,10 @@ class k1_GNN_sub(torch.nn.Module):
         
         if self.use_pos:
             x = torch.cat([x, data.pos], 1)
+        
+        if self.RNI:
+            rand_x = torch.rand(*x.size()).to(x.device) * 2 - 1
+            x = torch.cat([x, rand_x], 1)
 
         for conv in self.convs:
             x = F.elu(conv(x, data.edge_index, data.edge_attr))

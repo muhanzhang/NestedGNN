@@ -120,6 +120,8 @@ parser.add_argument('--subgraph_pooling', default='mean')
 
 parser.add_argument('--use_pos', action='store_true', default=False, 
                     help='use node position (3D) as continuous node features')
+parser.add_argument('--RNI', action='store_true', default=False, 
+                    help='use node randomly initialized node features in [-1, 1]')
 parser.add_argument('--use_relative_pos', action='store_true', default=False, 
                     help='use relative node position (3D) as continuous edge features')
 parser.add_argument('--use_ppgn', action='store_true', default=False, 
@@ -329,6 +331,7 @@ kwargs = {
     'use_ppgn': args.use_ppgn, 
     'use_max_dist': args.use_max_dist, 
     'use_rd': args.use_rd, 
+    'RNI': args.RNI
 }
 if True:
     model = eval(args.model)(dataset, **kwargs)
