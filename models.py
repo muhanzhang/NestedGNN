@@ -949,12 +949,18 @@ class k1_GNN_sub_ppgn(torch.nn.Module):
          
 class NestedPPGN(torch.nn.Module):
     def __init__(self, dataset, num_layers=2, num_global_layers=2, 
-                 edge_attr_dim=5, **kwargs):
+                 edge_attr_dim=5, use_rd=False, **kwargs):
         super(NestedPPGN, self).__init__()
+
+        self.use_rd = use_rd
+        if self.use_rd:
+            self.rd_projection = torch.nn.Linear(1, 8)
+        self.z_embedding = torch.nn.Embedding(1000, 8)
+        self.node_type_embedding = torch.nn.Embedding(5, 8)
 
         # local ppgn modules
         self.local_blocks = torch.nn.ModuleList()
-        rb = RegularBlock(2, edge_attr_dim + 1 + dataset.num_features, 128)
+        rb = RegularBlock(2, edge_attr_dim + 1 + dataset.num_features + 8, 128)
         self.local_blocks.append(rb)
         for l in range(num_layers - 1):
             rb = RegularBlock(2, 128, 128)
@@ -974,6 +980,24 @@ class NestedPPGN(torch.nn.Module):
 
     def forward(self, data):
 
+        # node label embedding
+        z_emb = 0
+        if 'z' in data:
+            ### computing input node embedding
+            z_emb = self.z_embedding(data.z)
+            if z_emb.ndim == 3:
+                z_emb = z_emb.sum(dim=1)
+        
+        if self.use_rd and 'rd' in data:
+            rd_proj = self.rd_projection(data.rd)
+            z_emb += rd_proj
+            
+        # integer node type embedding
+        x = self.node_type_embedding(data.node_type) + z_emb
+            
+        # concatenate with continuous node features
+        x = torch.cat([x, data.x], -1)
+
         ''' local ppgn features '''
         edge_adj = torch.ones(data.edge_attr.shape[0], 1).to(data.x.device)
         edge_attr = torch.cat(
@@ -984,7 +1008,7 @@ class NestedPPGN(torch.nn.Module):
         )  # |subgraphs| * max_nodes * max_nodes * attr_dim
 
         dense_node_attr = to_dense_batch(
-            data.x, data.node_to_subgraph
+            x, data.node_to_subgraph
         )[0]  # |subgraphs| * max_nodes * d
         dense_pos = to_dense_batch(
             data.pos, data.node_to_subgraph
