@@ -24,7 +24,7 @@ class NormalizedDegree(object):
 
 
 def get_dataset(name, sparse=True, h=None, node_label='hop', use_rd=False, 
-                use_rp=None, reprocess=False, clean=False):
+                use_rp=None, reprocess=False, clean=False, max_nodes_per_hop=None):
     path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data')
     pre_transform = None
     if h is not None:
@@ -32,7 +32,10 @@ def get_dataset(name, sparse=True, h=None, node_label='hop', use_rd=False,
         path += '_' + node_label
         if use_rd:
             path += '_rd'
-        pre_transform = lambda x: create_subgraphs(x, h, 1.0, None, node_label, use_rd)
+        if max_nodes_per_hop is not None:
+            path += '_mnph{}'.format(max_nodes_per_hop)
+
+        pre_transform = lambda x: create_subgraphs(x, h, 1.0, max_nodes_per_hop, node_label, use_rd)
 
     if use_rp is not None:  # use RW return probability as additional features
         path += f'_rp{use_rp}'

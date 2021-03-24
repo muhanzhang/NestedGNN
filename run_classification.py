@@ -49,6 +49,7 @@ parser.add_argument('--h', type=int, default=None)
 parser.add_argument('--multiple_h', type=str, default=None, 
                     help='use multiple hops of enclosing subgraphs, example input:\
                     "2,3", which will overwrite h with a list [2, 3]')
+parser.add_argument('--max_nodes_per_hop', type=int, default=None)
 parser.add_argument('--node_label', type=str, default='hop', 
                     help='apply labeling trick to nodes within each subgraph, use node\
                     labels as additional node features; support "hop", "drnl", "spd", \
@@ -175,6 +176,7 @@ for dataset_name, Net in product(datasets, nets):
             args.use_rp, 
             args.reprocess, 
             args.clean, 
+            args.max_nodes_per_hop, 
         )
         model = Net(dataset, num_layers, hidden)
         #loss, acc, std = cross_validation_without_val_set(
