@@ -1,4 +1,5 @@
 import torch
+import random
 import math
 import pdb
 import torch.nn as nn
@@ -61,7 +62,8 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
         subgraphs = []
         for ind in range(num_nodes):
             nodes_, edge_index_, edge_mask_, z_ = k_hop_subgraph(
-                ind, h_, edge_index, True, num_nodes, node_label=node_label 
+                ind, h_, edge_index, True, num_nodes, node_label=node_label, 
+                max_nodes_per_hop=max_nodes_per_hop
             )
             x_ = None
             edge_attr_ = None
@@ -142,7 +144,8 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
 
 
 def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
-                   num_nodes=None, flow='source_to_target', node_label='hop'):
+                   num_nodes=None, flow='source_to_target', node_label='hop', 
+                   max_nodes_per_hop=None):
 
     num_nodes = maybe_num_nodes(edge_index, num_nodes)
 
@@ -175,6 +178,9 @@ def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
             label[node].append(h+2)
         if len(tmp) == 0:
             break
+        if max_nodes_per_hop is not None:
+            if max_nodes_per_hop < len(tmp):
+                tmp = random.sample(tmp, max_nodes_per_hop)
         new_nodes = set(tmp)
         visited = visited.union(new_nodes)
         new_nodes = torch.tensor(list(new_nodes), device=row.device)
