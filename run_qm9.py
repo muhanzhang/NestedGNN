@@ -108,6 +108,7 @@ parser.add_argument('--h', type=int, default=None, help='hop of enclosing subgra
 parser.add_argument('--multiple_h', type=str, default=None, 
                     help='use multiple hops of enclosing subgraphs, example input:\
                     "2,3", which will overwrite h with a list [2, 3]')
+parser.add_argument('--max_nodes_per_hop', type=int, default=None)
 parser.add_argument('--node_label', type=str, default='spd', 
                     help='apply labeling trick to nodes within each subgraph, use node\
                     labels as additional node features; support "hop", "drnl", "spd", \
@@ -196,8 +197,12 @@ if args.h is not None:
     path += '_' + args.node_label
     if args.use_rd:
         path += '_rd'
+    if args.max_nodes_per_hop is not None:
+        path += '_mnph{}'.format(args.max_nodes_per_hop)
     def pre_transform(g):
-        return create_subgraphs(g, args.h, node_label=args.node_label, 
+        return create_subgraphs(g, args.h, 
+                                max_nodes_per_hop=args.max_nodes_per_hop, 
+                                node_label=args.node_label, 
                                 use_rd=args.use_rd,
                                 subgraph_pretransform=subgraph_pretransform)
         

@@ -952,15 +952,17 @@ class NestedPPGN(torch.nn.Module):
                  edge_attr_dim=5, use_rd=False, **kwargs):
         super(NestedPPGN, self).__init__()
 
+        '''
         self.use_rd = use_rd
         if self.use_rd:
             self.rd_projection = torch.nn.Linear(1, 8)
         self.z_embedding = torch.nn.Embedding(1000, 8)
         self.node_type_embedding = torch.nn.Embedding(5, 8)
+        '''
 
         # local ppgn modules
         self.local_blocks = torch.nn.ModuleList()
-        rb = RegularBlock(2, edge_attr_dim + 1 + dataset.num_features + 8, 128)
+        rb = RegularBlock(2, edge_attr_dim + 1 + dataset.num_features + 5, 128)
         self.local_blocks.append(rb)
         for l in range(num_layers - 1):
             rb = RegularBlock(2, 128, 128)
@@ -980,6 +982,7 @@ class NestedPPGN(torch.nn.Module):
 
     def forward(self, data):
 
+        '''
         # node label embedding
         z_emb = 0
         if 'z' in data:
@@ -997,6 +1000,9 @@ class NestedPPGN(torch.nn.Module):
             
         # concatenate with continuous node features
         x = torch.cat([x, data.x], -1)
+        '''
+        x1 = F.one_hot(data.node_type, num_classes=5)
+        x = torch.cat([x1, data.x], -1)
 
         ''' local ppgn features '''
         edge_adj = torch.ones(data.edge_attr.shape[0], 1).to(data.x.device)
