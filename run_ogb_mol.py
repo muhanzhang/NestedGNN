@@ -233,6 +233,8 @@ parser.add_argument('--use_rd', action='store_true', default=False,
 parser.add_argument('--use_rp', type=int, default=None, 
                     help='use RW return probability as additional node features,\
                     specify num of RW steps here')
+parser.add_argument('--RNI', action='store_true', default=False, 
+                    help='use node randomly initialized node features in [-1, 1]')
 parser.add_argument('--adj_dropout', type=float, default=0,
                     help='adjacency matrix dropout ratio (default: 0)')
 parser.add_argument('--drop_ratio', type=float, default=0.5,
@@ -420,7 +422,7 @@ for run in range(start_run, start_run + runs):
     else:
         model = GNN(args.dataset, num_classes, gnn_type=gnn_type, emb_dim=args.emb_dim, 
                     drop_ratio=args.drop_ratio, virtual_node=args.virtual_node, 
-                    **kwargs).to(device)
+                    RNI=args.RNI, **kwargs).to(device)
 
     optimizer = optim.Adam(model.parameters(), lr=args.lr)
     if args.scheduler:

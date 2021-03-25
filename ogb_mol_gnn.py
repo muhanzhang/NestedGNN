@@ -36,7 +36,7 @@ class GNN(torch.nn.Module):
                  virtual_node=True, residual=False, drop_ratio=0.5, JK="last", 
                  graph_pooling="mean", subgraph_pooling="mean", 
                  center_pool_virtual=False, use_rd=False, use_rp=None, 
-                 nonlinear_after_subpool=False, **kwargs):
+                 nonlinear_after_subpool=False, RNI=False,  **kwargs):
         '''
             num_tasks (int): number of labels to be predicted
             virtual_node (bool): whether to add virtual node or not
@@ -72,6 +72,7 @@ class GNN(torch.nn.Module):
             center_pool_virtual=center_pool_virtual, 
             use_rd=use_rd, 
             use_rp=use_rp, 
+            RNI=RNI, 
         )
 
         ### Pooling function to generate whole-graph embeddings
@@ -356,7 +357,7 @@ class GNN_node(torch.nn.Module):
     def __init__(self, dataset, num_layer, emb_dim, drop_ratio=0.5, JK="last", residual=False, 
                  gnn_type='gin', virtual_node=True, use_rd=False, adj_dropout=0, 
                  skip_node_encoder=False, use_rp=None, 
-                 center_pool_virtual=False,
+                 center_pool_virtual=False, RNI=False, 
                  ):
         '''
             emb_dim (int): node embedding dimensionality
@@ -374,6 +375,7 @@ class GNN_node(torch.nn.Module):
         self.use_rp = use_rp
         self.adj_dropout = adj_dropout
         self.center_pool_virtual = center_pool_virtual
+        self.RNI = RNI
 
         z_emb_dim, x_emb_dim = emb_dim, emb_dim
 
@@ -463,6 +465,10 @@ class GNN_node(torch.nn.Module):
             z_emb = z_emb + rp_proj
 
         h0 += z_emb
+        
+        if self.RNI:
+            rand_x = torch.rand(*h0.size()).to(h0.device) * 2 - 1
+            h0 += rand_x
 
         h_list = [h0]
 
