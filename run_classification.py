@@ -205,5 +205,6 @@ for dataset_name, Net in product(datasets, nets):
     results += ['{} - {}: {}'.format(dataset_name, model.__class__.__name__, desc)]
 
 log = '-----\n{}'.format('\n'.join(results))
+print(cmd_input)
 print(log)
 logger(log)
