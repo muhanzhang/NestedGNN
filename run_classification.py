@@ -108,7 +108,7 @@ if args.data == 'all':
     #datasets += ['DD', 'COLLAB']
     #datasets = ['MUTAG', 'DD', 'PROTEINS', 'IMDB-BINARY', 'REDDIT-BINARY']
     #datasets = ['MUTAG', 'PROTEINS', 'IMDB-BINARY']
-    datasets = ['DD']
+    datasets = ['DD', 'MUTAG', 'NCI1', 'PROTEINS', 'ENZYMES', 'IMDB-BINARY']
     #datasets = ['REDDIT-BINARY']
 else:
     datasets = [args.data]
@@ -143,7 +143,10 @@ else:
     SortPool,
 '''
 if args.model == 'all':
-    nets = [GIN, NestedGIN]
+    nets = [GCN, NestedGCN, GraphSAGE, NestedGraphSAGE, GIN, NestedGIN]
+    #nets = [GCN, NestedGCN]
+    #nets = [GraphSAGE, NestedGraphSAGE]
+    #nets = [GIN, NestedGIN]
 else:
     nets = [eval(args.model)]
 
@@ -178,9 +181,9 @@ for dataset_name, Net in product(datasets, nets):
             args.clean, 
             args.max_nodes_per_hop, 
         )
-        model = Net(dataset, num_layers, hidden)
+        model = Net(dataset, num_layers, hidden, args.node_label!='no', args.use_rd)
         #loss, acc, std = cross_validation_without_val_set(
-        loss, acc, std = cross_validation_with_val_set(
+        loss, acc, std, avg_train_loss, std_train_loss = cross_validation_with_val_set(
             dataset,
             model,
             folds=10,
@@ -193,10 +196,12 @@ for dataset_name, Net in product(datasets, nets):
             device=device, 
             logger=logger)
         if loss < best_result[0]:
-            best_result = (loss, acc, std)
+            best_result = (loss, acc, std, avg_train_loss, std_train_loss)
             best_hyper = (num_layers, hidden, h)
 
-    desc = '{:.3f} ± {:.3f}'.format(best_result[1], best_result[2])
+    desc = '{:.3f} ± {:.3f}, {:.3f} ± {:.3f}'.format(
+        best_result[1], best_result[2], best_result[3], best_result[4]
+    )
     log = 'Best result - {}, with {} layers and {} hidden units and h = {}'.format(
         desc, best_hyper[0], best_hyper[1], best_hyper[2]
     )
@@ -205,6 +210,6 @@ for dataset_name, Net in product(datasets, nets):
     results += ['{} - {}: {}'.format(dataset_name, model.__class__.__name__, desc)]
 
 log = '-----\n{}'.format('\n'.join(results))
-print(cmd_input)
+print(cmd_input[:-1])
 print(log)
 logger(log)
