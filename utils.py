@@ -89,7 +89,10 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
             if use_rd:
                 adj = to_scipy_sparse_matrix(edge_index_, num_nodes=nodes_.shape[0]).tocsr()
                 laplacian = ssp.csgraph.laplacian(adj).toarray()
-                L_inv = linalg.pinv(laplacian)
+                try:
+                    L_inv = linalg.pinv(laplacian)
+                except:
+                    laplacian += 0.01 * np.eye(*laplacian.shape)
                 lxx = L_inv[0, 0]
                 lyy = L_inv[list(range(len(L_inv))), list(range(len(L_inv)))]
                 lxy = L_inv[0, :]

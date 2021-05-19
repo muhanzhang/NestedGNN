@@ -143,10 +143,8 @@ else:
     SortPool,
 '''
 if args.model == 'all':
-    nets = [GCN, NestedGCN, GraphSAGE, NestedGraphSAGE, GIN, NestedGIN]
-    #nets = [GCN, NestedGCN]
-    #nets = [GraphSAGE, NestedGraphSAGE]
-    #nets = [GIN, NestedGIN]
+    #nets = [GCN, GraphSAGE, GIN]
+    nets = [NestedGCN, NestedGraphSAGE, NestedGIN]
 else:
     nets = [eval(args.model)]
 
