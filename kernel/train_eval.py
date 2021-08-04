@@ -96,22 +96,20 @@ def cross_validation_with_val_set(dataset,
     loss, acc = loss.view(folds, epochs), acc.view(folds, epochs)
     loss, argmin = loss.min(dim=1)
     acc = acc[torch.arange(folds, dtype=torch.long), argmin]
-    average_train_loss = float(np.mean(final_train_losses))
-    std_train_loss = float(np.std(final_train_losses))
+    #average_train_loss = float(np.mean(final_train_losses))
+    #std_train_loss = float(np.std(final_train_losses))
 
     log = 'Val Loss: {:.4f}, Test Accuracy: {:.3f} ± {:.3f}, Duration: {:.3f}'.format(
         loss.mean().item(),
         acc.mean().item(),
         acc.std().item(),
         duration.mean().item()
-    ) + ', Avg Train Loss: {:.4f}'.format(average_train_loss)
+    ) #+ ', Avg Train Loss: {:.4f}'.format(average_train_loss)
     print(log)
     if logger is not None:
         logger(log)
 
-
-    return (loss.mean().item(), acc.mean().item(), acc.std().item(), 
-            average_train_loss, std_train_loss)
+    return loss.mean().item(), acc.mean().item(), acc.std().item()
 
 
 def cross_validation_without_val_set( dataset,
@@ -133,7 +131,7 @@ def cross_validation_without_val_set( dataset,
         print("CV fold " + str(count))
         count += 1
 
-        train_idx = torch.cat([train_idx, val_idx], 0)
+        train_idx = torch.cat([train_idx, val_idx], 0)  # combine train and val
         train_dataset = dataset[train_idx]
         test_dataset = dataset[test_idx]
 
@@ -201,7 +199,8 @@ def cross_validation_without_val_set( dataset,
     if logger is not None:
         logger(log)
 
-    return loss.mean().item(), acc_final.item(), acc[:, -1].std().item()
+    #return loss.mean().item(), acc_final.item(), acc[:, -1].std().item()
+    return loss.mean().item(), acc_max.item(), acc[:, argmax].std().item()
 
 
 def k_fold(dataset, folds):

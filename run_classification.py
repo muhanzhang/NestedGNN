@@ -41,6 +41,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--data', type=str, default='MUTAG')
 parser.add_argument('--clean', action='store_true', default=False,
                     help='use a cleaned version of dataset by removing isomorphism')
+parser.add_argument('--no_val', action='store_true', default=False,
+                    help='if True, do not use validation set, but directly report best\
+                    test performance.')
 parser.add_argument('--model', type=str, default='NGNN')
 parser.add_argument('--epochs', type=int, default=100)
 parser.add_argument('--batch_size', type=int, default=128)
@@ -111,7 +114,7 @@ if args.data == 'all':
     #datasets = ['MUTAG', 'PROTEINS', 'IMDB-BINARY']
     #datasets = ['DD', 'MUTAG', 'NCI1', 'PROTEINS', 'ENZYMES', 'IMDB-BINARY']
     datasets = ['DD', 'MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
-    datasets = ['MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
+    #datasets = ['MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES', 'DD']
     #datasets = ['REDDIT-BINARY']
 else:
     datasets = [args.data]
@@ -156,6 +159,11 @@ def logger(info):
 
 device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
 
+if args.no_val:
+    cross_val_method = cross_validation_without_val_set
+else:
+    cross_val_method = cross_validation_with_val_set
+
 results = []
 for dataset_name, Net in product(datasets, nets):
     best_result = (float('inf'), 0, 0)
@@ -182,8 +190,7 @@ for dataset_name, Net in product(datasets, nets):
             args.max_nodes_per_hop, 
         )
         model = Net(dataset, num_layers, hidden, args.node_label!='no', args.use_rd)
-        #loss, acc, std = cross_validation_without_val_set(
-        loss, acc, std, avg_train_loss, std_train_loss = cross_validation_with_val_set(
+        loss, acc, std = cross_val_method(
             dataset,
             model,
             folds=10,
@@ -196,11 +203,11 @@ for dataset_name, Net in product(datasets, nets):
             device=device, 
             logger=logger)
         if loss < best_result[0]:
-            best_result = (loss, acc, std, avg_train_loss, std_train_loss)
+            best_result = (loss, acc, std)
             best_hyper = (num_layers, hidden, h)
 
-    desc = '{:.3f} ± {:.3f}, {:.3f} ± {:.3f}'.format(
-        best_result[1], best_result[2], best_result[3], best_result[4]
+    desc = '{:.3f} ± {:.3f}'.format(
+        best_result[1], best_result[2]
     )
     log = 'Best result - {}, with {} layers and {} hidden units and h = {}'.format(
         desc, best_hyper[0], best_hyper[1], best_hyper[2]
