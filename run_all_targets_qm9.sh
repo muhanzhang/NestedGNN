@@ -21,5 +21,5 @@ do
   
   #python run_qm9.py --model k1_GNN --save_appendix _k1_RNI --RNI --target ${target}
   #python run_qm9.py --h 3 --model k1_GNN_sub --save_appendix _k1_h3_spd_rd_RNI --RNI --use_rd --target ${target}
-  python run_qm9.py --h 1 --model NestedPPGN --save_appendix _nppgn_h1_l1_spd_rd --layers 1 --node_label spd --use_rd --target ${target} --batch_size 16
+  python run_qm9.py --h 1 --model NestedPPGN --save_appendix _nppgn_h1_l1_spd_rd --layers 1 --node_label spd --use_rd --target ${target} --batch_size 64
 done

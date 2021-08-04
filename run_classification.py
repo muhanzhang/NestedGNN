@@ -14,6 +14,7 @@ from kernel.train_eval import cross_validation_without_val_set
 from kernel.gcn import *
 from kernel.graph_sage import *
 from kernel.gin import *
+from kernel.gat import *
 from kernel.graclus import Graclus
 from kernel.top_k import TopK
 from kernel.diff_pool import DiffPool
@@ -108,7 +109,8 @@ if args.data == 'all':
     #datasets += ['DD', 'COLLAB']
     #datasets = ['MUTAG', 'DD', 'PROTEINS', 'IMDB-BINARY', 'REDDIT-BINARY']
     #datasets = ['MUTAG', 'PROTEINS', 'IMDB-BINARY']
-    datasets = ['DD', 'MUTAG', 'NCI1', 'PROTEINS', 'ENZYMES', 'IMDB-BINARY']
+    #datasets = ['DD', 'MUTAG', 'NCI1', 'PROTEINS', 'ENZYMES', 'IMDB-BINARY']
+    datasets = ['DD', 'MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
     #datasets = ['REDDIT-BINARY']
 else:
     datasets = [args.data]
