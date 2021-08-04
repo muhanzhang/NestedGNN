@@ -3,9 +3,9 @@ from torch.utils.data.dataloader import default_collate
 
 from torch_geometric.data import Data
 from batch import Batch  # replace with custom Batch to handle subgraphs
-#from torch._six import string_classes, int_classes
 import collections.abc as container_abcs
-#int_classes = int
+int_classes = int
+string_classes = (str, bytes)
 
 
 class DataLoader(torch.utils.data.DataLoader):

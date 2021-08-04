@@ -111,6 +111,7 @@ if args.data == 'all':
     #datasets = ['MUTAG', 'PROTEINS', 'IMDB-BINARY']
     #datasets = ['DD', 'MUTAG', 'NCI1', 'PROTEINS', 'ENZYMES', 'IMDB-BINARY']
     datasets = ['DD', 'MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
+    datasets = ['MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
     #datasets = ['REDDIT-BINARY']
 else:
     datasets = [args.data]
