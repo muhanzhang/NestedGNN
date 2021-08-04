@@ -116,16 +116,15 @@ else:
     datasets = [args.data]
 
 if args.search:
-    if args.h is not None:
-        #layers = [1, 2, 3, 4, 5]
-        #hiddens = [16, 32, 64, 128]
-        layers = [2, 3, 4]
-        hiddens = [32, 128]
+    if args.h is None:
+        layers = [2, 3, 4, 5]
+        hiddens = [32]
         hs = [None]
     else:
-        layers = [2, 3, 3, 4, 4, 5, 5, 6]
-        hiddens = [32] * 8
-        hs = [1, 1, 2, 2, 3, 3, 4, 4]
+        layers = [2, 3, 4, 5]
+        hiddens = [32]
+        hs = [1, 2, 3, 4]
+
 else:
     layers = [args.layers]
     hiddens = [args.hiddens]
