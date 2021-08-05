@@ -113,8 +113,8 @@ if args.data == 'all':
     #datasets = ['MUTAG', 'DD', 'PROTEINS', 'IMDB-BINARY', 'REDDIT-BINARY']
     #datasets = ['MUTAG', 'PROTEINS', 'IMDB-BINARY']
     #datasets = ['DD', 'MUTAG', 'NCI1', 'PROTEINS', 'ENZYMES', 'IMDB-BINARY']
-    datasets = ['DD', 'MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
-    #datasets = ['MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES', 'DD']
+    #datasets = ['DD', 'MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
+    datasets = ['MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES', 'DD']
     #datasets = ['REDDIT-BINARY']
 else:
     datasets = [args.data]
@@ -148,8 +148,8 @@ else:
     SortPool,
 '''
 if args.model == 'all':
-    #nets = [GCN, GraphSAGE, GIN]
-    nets = [NestedGCN, NestedGraphSAGE, NestedGIN]
+    nets = [GCN, GraphSAGE, GIN, GAT]
+    #nets = [NestedGCN, NestedGraphSAGE, NestedGIN, NestedGAT]
 else:
     nets = [eval(args.model)]
 

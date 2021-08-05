@@ -162,8 +162,8 @@ def cross_validation_without_val_set( dataset,
                 'test_loss': test_losses[-1],
                 'test_acc': accs[-1],
             }
-            log = 'Fold: %d, train_loss: %0.4f, val_loss: %0.4f, test_acc: %0.4f' % (
-                fold, eval_info["train_loss"], eval_info["val_loss"], eval_info["test_acc"]
+            log = 'Fold: %d, train_loss: %0.4f, test_loss: %0.4f, test_acc: %0.4f' % (
+                fold, eval_info["train_loss"], eval_info["test_loss"], eval_info["test_acc"]
             )
             pbar.set_description(log)
 
