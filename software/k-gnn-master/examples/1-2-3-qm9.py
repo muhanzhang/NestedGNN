@@ -1,34 +1,16 @@
 import os.path as osp
 
-import pdb, os, sys
 import argparse
-import random
-import numpy as np
 import torch
 import torch.nn.functional as F
 from torch.nn import Sequential, Linear, ReLU
 from torch_scatter import scatter_mean
-#from torch_geometric.datasets import QM9
-#from qm9-sg import QM9  # replace with the latest correct QM9 from master with Dataset instead of InMemoryDataset
+from torch_geometric.datasets import QM9
 import torch_geometric.transforms as T
 from torch_geometric.nn import NNConv
 from k_gnn import GraphConv, DataLoader, avg_pool
 from k_gnn import TwoMalkin, ConnectedThreeMalkin
 
-sys.path.append('%s/../../../' % os.path.dirname(os.path.realpath(__file__)))
-from utils import create_subgraphs
-from qm9 import QM9  # replace with the latest correct QM9 from master 
-
-#import warnings
-#warnings.filterwarnings("ignore")
-
-
-HAR2EV = 27.2113825435
-KCALMOL2EV = 0.04336414
-conversion = torch.tensor([
-    1., 1., HAR2EV, HAR2EV, HAR2EV, 1., HAR2EV, HAR2EV, HAR2EV, HAR2EV, HAR2EV,
-    1., KCALMOL2EV, KCALMOL2EV, KCALMOL2EV, KCALMOL2EV, 1., 1., 1.
-])
 
 class MyFilter(object):
     def __call__(self, data):
@@ -46,60 +28,34 @@ class MyPreTransform(object):
 
 
 class MyTransform(object):
-    def __init__(self, pre_convert=False):
-        self.pre_convert = pre_convert
-
     def __call__(self, data):
         data.y = data.y[:, int(args.target)]  # Specify target: 0 = mu
-        if self.pre_convert:  # convert back to original units
-            data.y = data.y / conversion[int(args.target)]
         return data
 
 
 parser = argparse.ArgumentParser()
 parser.add_argument('--target', default=0)
-parser.add_argument('--batch_size', type=int, default=64)
-parser.add_argument('--subgraph', action='store_true', default=False, 
-                    help='whether to use SubgraphConv')
-parser.add_argument('--convert', type=str, default='post',
-                    help='if "post", convert units after optimization; if "pre", \
-                    convert units before optimization')
-parser.add_argument('--h', type=int, default=1)
-parser.add_argument('--use_pos', action='store_true', default=False, 
-                    help='use node position (3D) as continuous node features')
-parser.add_argument('--seed', type=int, default=1)
 args = parser.parse_args()
-
-torch.manual_seed(args.seed)
-if torch.cuda.is_available():
-    torch.cuda.manual_seed(args.seed)
-random.seed(args.seed)
-np.random.seed(args.seed)
-
 target = int(args.target)
+
 print('---- Target: {} ----'.format(target))
 
 path = osp.join(osp.dirname(osp.realpath(__file__)), '..', 'data', '1-2-3-QM9')
-
-if not args.subgraph:
-    pre_transform = MyPreTransform()
-else:  # subgraph
-    path += '_sg_' + str(args.h)
-    subgraph_transform = lambda x: create_subgraphs(x, args.h, use_rd=False)
-    pre_transform = T.Compose([subgraph_transform, MyPreTransform()])
-
 dataset = QM9(
     path,
-    #transform=T.Compose([pre_transform, MyTransform(args.convert=='pre'), T.Distance()]),
-    transform=T.Compose([MyTransform(args.convert=='pre'), T.Distance()]),
-    pre_transform=pre_transform,
+    transform=T.Compose([MyTransform(), T.Distance()]),
+    pre_transform=MyPreTransform(),
     pre_filter=MyFilter())
 
-#dataset.data.iso_type_2 = torch.unique(dataset.data.iso_type_2, True, True)[1]
-#num_i_2 = dataset.data.iso_type_2.max().item() + 1
+dataset.data.iso_type_2 = torch.unique(dataset.data.iso_type_2, True, True)[1]
+num_i_2 = dataset.data.iso_type_2.max().item() + 1
+dataset.data.iso_type_2 = F.one_hot(
+    dataset.data.iso_type_2, num_classes=num_i_2).to(torch.float)
 
-#dataset.data.iso_type_3 = torch.unique(dataset.data.iso_type_3, True, True)[1]
-#num_i_3 = dataset.data.iso_type_3.max().item() + 1
+dataset.data.iso_type_3 = torch.unique(dataset.data.iso_type_3, True, True)[1]
+num_i_3 = dataset.data.iso_type_3.max().item() + 1
+dataset.data.iso_type_3 = F.one_hot(
+    dataset.data.iso_type_3, num_classes=num_i_3).to(torch.float)
 
 dataset = dataset.shuffle()
 
@@ -112,18 +68,15 @@ dataset.data.y = (dataset.data.y - mean) / std
 test_dataset = dataset[:tenpercent]
 val_dataset = dataset[tenpercent:2 * tenpercent]
 train_dataset = dataset[2 * tenpercent:]
-test_loader = DataLoader(test_dataset, batch_size=args.batch_size)
-val_loader = DataLoader(val_dataset, batch_size=args.batch_size)
-train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
+test_loader = DataLoader(test_dataset, batch_size=64)
+val_loader = DataLoader(val_dataset, batch_size=64)
+train_loader = DataLoader(train_dataset, batch_size=64, shuffle=True)
 
 
-num_i_2 = 39
-num_i_3 = 194
 class Net(torch.nn.Module):
     def __init__(self):
         super(Net, self).__init__()
         M_in, M_out = dataset.num_features, 32
-        M_in = M_in + 3 if args.use_pos else M_in
         nn1 = Sequential(Linear(5, 128), ReLU(), Linear(128, M_in * M_out))
         self.conv1 = NNConv(M_in, M_out, nn1)
 
@@ -146,13 +99,6 @@ class Net(torch.nn.Module):
         self.fc3 = torch.nn.Linear(32, 1)
 
     def forward(self, data):
-        data.iso_type_2 = F.one_hot(
-            data.iso_type_2, num_classes=num_i_2).to(torch.float)
-        data.iso_type_3 = F.one_hot(
-            data.iso_type_3, num_classes=num_i_3).to(torch.float)
-
-        if args.use_pos:
-            data.x = torch.cat([data.x, data.pos], 1)
         data.x = F.elu(self.conv1(data.x, data.edge_index, data.edge_attr))
         data.x = F.elu(self.conv2(data.x, data.edge_index, data.edge_attr))
         data.x = F.elu(self.conv3(data.x, data.edge_index, data.edge_attr))
@@ -225,19 +171,11 @@ for epoch in range(1, 201):
     if val_error <= best_val_error:
         test_error = test(test_loader)
         best_val_error = val_error
-        log = (
-            'Epoch: {:03d}, LR: {:7f}, Loss: {:.7f}, Validation MAE: {:.7f}, ' +
-            'Test MAE: {:.7f}, Test MAE norm: {:.7f}, Test MAE convert: {:.7f}'
-        ).format(
-             epoch, lr, loss, val_error,
-             test_error,
-             test_error / std[target].cuda(), 
-             test_error / conversion[int(args.target)].cuda() if args.convert == 'post' else 0
-        )
-        print(log)
-        with open('tmp_result.txt', 'a') as f:
-            print(log, file=f)
+        print(
+            'Epoch: {:03d}, LR: {:7f}, Loss: {:.7f}, Validation MAE: {:.7f}, '
+            'Test MAE: {:.7f}, '
+            'Test MAE norm: {:.7f}'.format(epoch, lr, loss, val_error,
+                                           test_error,
+                                           test_error / std[target].cuda()))
     else:
         print('Epoch: {:03d}'.format(epoch))
-        with open('tmp_result.txt', 'a') as f:
-            print('Epoch: {:03d}'.format(epoch), file=f)

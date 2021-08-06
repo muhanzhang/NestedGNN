@@ -21,7 +21,6 @@ from kernel.diff_pool import DiffPool
 from kernel.global_attention import GlobalAttentionNet
 from kernel.set2set import Set2SetNet
 from kernel.sort_pool import SortPool
-from models import *
 
 
 # used to traceback which code cause warnings, can delete
@@ -37,25 +36,25 @@ def warn_with_traceback(message, category, filename, lineno, file=None, line=Non
 warnings.showwarning = warn_with_traceback
 
 
-parser = argparse.ArgumentParser()
+# General settings.
+parser = argparse.ArgumentParser(description='Nested GNN for TU graphs')
 parser.add_argument('--data', type=str, default='MUTAG')
 parser.add_argument('--clean', action='store_true', default=False,
                     help='use a cleaned version of dataset by removing isomorphism')
 parser.add_argument('--no_val', action='store_true', default=False,
                     help='if True, do not use validation set, but directly report best\
                     test performance.')
-parser.add_argument('--model', type=str, default='NGNN')
-parser.add_argument('--epochs', type=int, default=100)
-parser.add_argument('--batch_size', type=int, default=128)
+
+# GNN settings.
+parser.add_argument('--model', type=str, default='NestedGCN', 
+                    help='GCN, GraphSAGE, GIN, GAT, NestedGCN, NestedGraphSAGE, \
+                    NestedGIN, and NestedGAT')
 parser.add_argument('--layers', type=int, default=4)
 parser.add_argument('--hiddens', type=int, default=32)
-parser.add_argument('--h', type=int, default=None)
-parser.add_argument('--multiple_h', type=str, default=None, 
-                    help='use multiple hops of enclosing subgraphs, example input:\
-                    "2,3", which will overwrite h with a list [2, 3]')
-parser.add_argument('--max_nodes_per_hop', type=int, default=None)
-parser.add_argument('--node_label', type=str, default='hop', 
-                    help='apply labeling trick to nodes within each subgraph, use node\
+parser.add_argument('--h', type=int, default=None, help='the height of rooted subgraph \
+                    for NGNN models')
+parser.add_argument('--node_label', type=str, default='spd', 
+                    help='apply distance encoding to nodes within each subgraph, use node\
                     labels as additional node features; support "hop", "drnl", "spd", \
                     "spd5", etc. Default "spd"=="spd2".')
 parser.add_argument('--use_rd', action='store_true', default=False, 
@@ -63,9 +62,16 @@ parser.add_argument('--use_rd', action='store_true', default=False,
 parser.add_argument('--use_rp', type=int, default=None, 
                     help='use RW return probability as additional node features,\
                     specify num of RW steps here')
+parser.add_argument('--max_nodes_per_hop', type=int, default=None)
+
+# Training settings.
+parser.add_argument('--epochs', type=int, default=100)
+parser.add_argument('--batch_size', type=int, default=128)
 parser.add_argument('--lr', type=float, default=1E-2)
 parser.add_argument('--lr_decay_factor', type=float, default=0.5)
 parser.add_argument('--lr_decay_step_size', type=int, default=50)
+
+# Other settings.
 parser.add_argument('--seed', type=int, default=1)
 parser.add_argument('--search', action='store_true', default=False, 
                     help='search hyperparameters (layers, hiddens)')
@@ -84,8 +90,6 @@ if torch.cuda.is_available():
 random.seed(args.seed)
 np.random.seed(args.seed)
 
-if args.multiple_h is not None:
-    args.h = [int(h) for h in args.multiple_h.split(',')]
 file_dir = os.path.dirname(os.path.realpath('__file__'))
 if args.save_appendix == '':
     args.save_appendix = '_' + time.strftime("%Y%m%d%H%M%S")
@@ -95,11 +99,14 @@ if not os.path.exists(args.res_dir):
     os.makedirs(args.res_dir) 
 if not args.keep_old:
     # backup current main.py, model.py files
-    copy('run_classification.py', args.res_dir)
+    copy('run_tu.py', args.res_dir)
     copy('utils.py', args.res_dir)
-    copy('models.py', args.res_dir)
     copy('kernel/train_eval.py', args.res_dir)
     copy('kernel/datasets.py', args.res_dir)
+    copy('kernel/gcn.py', args.res_dir)
+    copy('kernel/gat.py', args.res_dir)
+    copy('kernel/graph_sage.py', args.res_dir)
+    copy('kernel/gin.py', args.res_dir)
 # save command line input
 cmd_input = 'python ' + ' '.join(sys.argv) + '\n'
 with open(os.path.join(args.res_dir, 'cmd_input.txt'), 'a') as f:
@@ -107,15 +114,7 @@ with open(os.path.join(args.res_dir, 'cmd_input.txt'), 'a') as f:
 print('Command line input: ' + cmd_input + ' is saved.')
 
 if args.data == 'all':
-    #datasets = ['MUTAG', 'PTC_MR', 'NCI1', 'PROTEINS', 'DD']
-    #datasets = ['MUTAG', 'PROTEINS', 'IMDB-BINARY', 'REDDIT-BINARY']
-    #datasets += ['DD', 'COLLAB']
-    #datasets = ['MUTAG', 'DD', 'PROTEINS', 'IMDB-BINARY', 'REDDIT-BINARY']
-    #datasets = ['MUTAG', 'PROTEINS', 'IMDB-BINARY']
-    #datasets = ['DD', 'MUTAG', 'NCI1', 'PROTEINS', 'ENZYMES', 'IMDB-BINARY']
-    #datasets = ['DD', 'MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
-    datasets = ['MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES', 'DD']
-    #datasets = ['REDDIT-BINARY']
+    datasets = [ 'DD', 'MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
 else:
     datasets = [args.data]
 
@@ -125,31 +124,17 @@ if args.search:
         hiddens = [32]
         hs = [None]
     else:
-        layers = [2, 3, 4, 5]
+        layers = [3, 4, 5, 6]
         hiddens = [32]
-        hs = [1, 2, 3, 4]
-
+        hs = [2, 3, 4, 5]
 else:
     layers = [args.layers]
     hiddens = [args.hiddens]
     hs = [args.h]
 
-'''
-    GCN,
-    GraphSAGE,
-    GIN0,
-    GIN,
-    Graclus,
-    TopK,
-    DiffPool,
-    GraphSAGEWithoutJK,
-    GlobalAttentionNet,
-    Set2SetNet,
-    SortPool,
-'''
 if args.model == 'all':
-    nets = [GCN, GraphSAGE, GIN, GAT]
-    #nets = [NestedGCN, NestedGraphSAGE, NestedGIN, NestedGAT]
+    #nets = [GCN, GraphSAGE, GIN, GAT]
+    nets = [NestedGCN, NestedGraphSAGE, NestedGIN, NestedGAT]
 else:
     nets = [eval(args.model)]
 
@@ -157,7 +142,9 @@ def logger(info):
     f = open(os.path.join(args.res_dir, 'log.txt'), 'a')
     print(info, file=f)
 
-device = torch.device('cuda' if torch.cuda.is_available() and not args.cpu else 'cpu')
+device = torch.device(
+    'cuda' if torch.cuda.is_available() and not args.cpu else 'cpu'
+)
 
 if args.no_val:
     cross_val_method = cross_validation_without_val_set

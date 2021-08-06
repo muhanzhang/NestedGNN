@@ -9,17 +9,16 @@ from tqdm import tqdm
 import torch
 import torch.nn.functional as F
 import torch_geometric.transforms as T
-from utils import create_subgraphs
-from models import *
 
-#from torch_geometric.datasets import QM9
-from qm9 import QM9  # replace with the latest correct QM9 from master
-#from torch_geometric.data import DataLoader
-from dataloader import DataLoader  # replace with custom dataloader to handle subgraphs
-from distance import Distance  # replace with custom Distance for original_edge_attr and multiple_h
+from qm9 import QM9
+from dataloader import DataLoader  # use a custom dataloader to handle subgraphs
+from distance import Distance  # custom Distance for original_edge_attr and multiple_h
 
 from k_gnn import GraphConv, avg_pool
 from k_gnn import TwoMalkin, ConnectedThreeMalkin
+
+from utils import create_subgraphs
+from qm9_models import *
 
 # The units provided by PyG QM9 are not consistent with their original units.
 # Below are meta data for unit conversion of each target task. We do unit conversion
@@ -80,14 +79,41 @@ class MyTransform(object):
         return data
 
 
-parser = argparse.ArgumentParser(description='Nested GNN')
-parser.add_argument('--model', type=str, default='k1_GNN')
+# General settings.
+parser = argparse.ArgumentParser(description='Nested GNN for QM9 graphs')
 parser.add_argument('--target', default=0)
+parser.add_argument('--filter', action='store_true', default=False, 
+                    help='whether to filter graphs with less than 7 nodes')
 parser.add_argument('--convert', type=str, default='post',
                     help='if "post", convert units after optimization; if "pre", \
                     convert units before optimization')
-parser.add_argument('--filter', action='store_true', default=False, 
-                    help='whether to filter graphs with less than 7 nodes')
+
+# Base GNN settings.
+parser.add_argument('--model', type=str, default='k1_GNN')
+parser.add_argument('--layers', type=int, default=5)
+
+# Nested GNN settings
+parser.add_argument('--h', type=int, default=None, help='hop of enclosing subgraph;\
+                    if None, will not use NestedGNN')
+parser.add_argument('--max_nodes_per_hop', type=int, default=None)
+parser.add_argument('--node_label', type=str, default='spd', 
+                    help='apply distance encoding to nodes within each subgraph, use node\
+                    labels as additional node features; support "hop", "drnl", "spd", \
+                    for "spd", you can specify number of spd to keep by "spd3", "spd4", \
+                    "spd5", etc. Default "spd"=="spd2".')
+parser.add_argument('--use_rd', action='store_true', default=False, 
+                    help='use resistance distance as additional node labels')
+parser.add_argument('--subgraph_pooling', default='mean', help='support mean and center\
+                    for some models, default mean for most models')
+
+# Training settings.
+parser.add_argument('--epochs', type=int, default=200)
+parser.add_argument('--batch_size', type=int, default=64)
+parser.add_argument('--lr', type=float, default=1E-3)
+parser.add_argument('--lr_decay_factor', type=float, default=0.7)
+parser.add_argument('--patience', type=int, default=5)
+
+# Other settings.
 parser.add_argument('--normalize_x', action='store_true', default=False,
                     help='if True, normalize non-binary node features')
 parser.add_argument('--squared_dist', action='store_true', default=False,
@@ -96,41 +122,12 @@ parser.add_argument('--not_normalize_dist', action='store_true', default=False,
                     help='do not normalize node distance by max distance of a molecule')
 parser.add_argument('--use_max_dist', action='store_true', default=False,
                     help='use maximum distance between all nodes as a global feature')
-parser.add_argument('--epochs', type=int, default=200)
-parser.add_argument('--batch_size', type=int, default=64)
-parser.add_argument('--layers', type=int, default=5)
-parser.add_argument('--cont_layers', type=int, default=0, 
-                    help='for sep models, # of conv layers for continuous features')
-
-# NestedGNN settings
-parser.add_argument('--h', type=int, default=None, help='hop of enclosing subgraph;\
-                    if None, will not use NestedGNN')
-parser.add_argument('--multiple_h', type=str, default=None, 
-                    help='use multiple hops of enclosing subgraphs, example input:\
-                    "2,3", which will overwrite h with a list [2, 3]')
-parser.add_argument('--max_nodes_per_hop', type=int, default=None)
-parser.add_argument('--node_label', type=str, default='spd', 
-                    help='apply labeling trick to nodes within each subgraph, use node\
-                    labels as additional node features; support "hop", "drnl", "spd", \
-                    for "spd", you can specify number of spd to keep by "spd3", "spd4", \
-                    "spd5", etc. Default "spd"=="spd2".')
-parser.add_argument('--use_rd', action='store_true', default=False, 
-                    help='use resistance distance as additional node labels')
-parser.add_argument('--subgraph_pooling', default='mean')
-
-
 parser.add_argument('--use_pos', action='store_true', default=False, 
                     help='use node position (3D) as continuous node features')
 parser.add_argument('--RNI', action='store_true', default=False, 
                     help='use node randomly initialized node features in [-1, 1]')
 parser.add_argument('--use_relative_pos', action='store_true', default=False, 
                     help='use relative node position (3D) as continuous edge features')
-parser.add_argument('--use_ppgn', action='store_true', default=False, 
-                    help='use provably-powerful-graph-net (ppgn) as additional module \
-                    to process edge attributes')
-parser.add_argument('--lr', type=float, default=1E-3)
-parser.add_argument('--lr_decay_factor', type=float, default=0.7)
-parser.add_argument('--patience', type=int, default=5)
 parser.add_argument('--seed', type=int, default=1)
 parser.add_argument('--save_appendix', default='', 
                     help='what to append to save-names when saving results')
@@ -147,10 +144,6 @@ random.seed(args.seed)
 np.random.seed(args.seed)
 
 
-if args.multiple_h is not None:
-    args.h = [int(h) for h in args.multiple_h.split(',')]
-
-
 if args.save_appendix == '':
     args.save_appendix = '_' + time.strftime("%Y%m%d%H%M%S")
 args.res_dir = 'results/QM9_{}{}'.format(args.target, args.save_appendix)
@@ -160,7 +153,7 @@ if not os.path.exists(args.res_dir):
 # Backup python files.
 copy('run_qm9.py', args.res_dir)
 copy('utils.py', args.res_dir)
-copy('models.py', args.res_dir)
+copy('qm9_models.py', args.res_dir)
 # Save command line input.
 cmd_input = 'python ' + ' '.join(sys.argv) + '\n'
 with open(os.path.join(args.res_dir, 'cmd_input.txt'), 'a') as f:
@@ -215,35 +208,24 @@ if args.filter:
     pre_filter = MyFilter()
     path += '_filtered'
 
-if args.multiple_h is not None:
-    dataset = QM9(
-        path, 
-        transform=MyTransform(args.convert=='pre'), 
-        pre_transform=T.Compose(
-            [pre_transform, Distance(relative_pos=args.use_relative_pos)]
-        ), 
-        pre_filter=pre_filter, 
-        skip_collate=True, 
-        one_hot_atom=False, 
-    )
-else:
-    dataset = QM9(
-        path, 
-        transform=T.Compose(
-            [
-                MyTransform(args.convert=='pre'), 
-                Distance(norm=args.not_normalize_dist==False, 
-                         relative_pos=args.use_relative_pos, 
-                         squared=args.squared_dist)
-            ]
-        ), 
-        pre_transform=pre_transform, 
-        pre_filter=pre_filter, 
-        skip_collate=False, 
-        one_hot_atom=False, 
-    )
+dataset = QM9(
+    path, 
+    transform=T.Compose(
+        [
+            MyTransform(args.convert=='pre'), 
+            Distance(norm=args.not_normalize_dist==False, 
+                     relative_pos=args.use_relative_pos, 
+                     squared=args.squared_dist)
+        ]
+    ), 
+    pre_transform=pre_transform, 
+    pre_filter=pre_filter, 
+    skip_collate=False, 
+    one_hot_atom=False, 
+)
 
 dataset = dataset.shuffle()
+
 
 if False:  # do some statistics
     loader = DataLoader(dataset, batch_size=1, shuffle=False)
@@ -251,9 +233,12 @@ if False:  # do some statistics
     n_edges = [data.edge_index.shape[1]/2 for data in tqdm(loader)]
     print(f'Avg #nodes: {np.mean(n_nodes)}, avg #edges: {np.mean(n_edges)}')
     from torch_geometric.utils import degree
-    avg_deg = torch.cat([degree(data.edge_index[0], data.num_nodes) for data in tqdm(loader)]).mean()
+    avg_deg = torch.cat(
+        [degree(data.edge_index[0], data.num_nodes) for data in tqdm(loader)]
+    ).mean()
     print(f'Avg node degree: {avg_deg}')
     pdb.set_trace()
+
 
 if False:  # visualize some graphs
     import networkx as nx
@@ -270,7 +255,9 @@ if False:  # visualize some graphs
             del data.name
         if args.subgraph:
             node_size = 100
-            data.x = torch.argmax(data.x[:, :args.h+1], 1).type(torch.int8) # only keep the hop label
+            data.x = torch.argmax(
+                data.x[:, :args.h+1], 1
+            ).type(torch.int8) # only keep the hop label
             with_labels = True
             G = to_networkx(data, node_attrs=['x'])
             labels = {i: G.nodes[i]['x'] for i in range(len(G))}
@@ -288,28 +275,13 @@ if False:  # visualize some graphs
 
 # Normalize targets to mean = 0 and std = 1.
 tenpercent = int(len(dataset) * 0.1)
-if args.multiple_h is not None:
-    all_y = [data[args.h[0]].y for data in dataset.data]
-    all_y = torch.cat(all_y, 0)
-    mean = all_y.mean(dim=0)
-    std = all_y.std(dim=0)
-    for data in dataset.data:
-        data[args.h[0]].y = (data[args.h[0]].y - mean) / std
-else:
-    mean = dataset.data.y[tenpercent:].mean(dim=0)
-    std = dataset.data.y[tenpercent:].std(dim=0)
-    dataset.data.y = (dataset.data.y - mean) / std
+mean = dataset.data.y[tenpercent:].mean(dim=0)
+std = dataset.data.y[tenpercent:].std(dim=0)
+dataset.data.y = (dataset.data.y - mean) / std
 
 train_dataset = dataset[2 * tenpercent:]
 
-if args.multiple_h is not None:
-    cont_feat_start_dim = {}
-    for h in args.h:
-        cont_feat_start_dim[h] = 5
-        
-else:
-    cont_feat_start_dim = 5
-
+cont_feat_start_dim = 5
 if args.normalize_x:
     x_mean = train_dataset.data.x[:, cont_feat_start_dim:].mean(dim=0)
     x_std = train_dataset.data.x[:, cont_feat_start_dim:].std(dim=0)
@@ -326,43 +298,22 @@ train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=Tru
 
 kwargs = {
     'num_layers': args.layers, 
-    'cont_feat_num_layers': args.cont_layers, 
     'subgraph_pooling': args.subgraph_pooling, 
-    #'num_h': len(args.h) if type(args.h) == list else 1, 
-    'hs': args.h, 
     'use_pos': args.use_pos, 
-    'cont_feat_start_dim': cont_feat_start_dim, 
     'edge_attr_dim': 8 if args.use_relative_pos else 5, 
-    'use_ppgn': args.use_ppgn, 
     'use_max_dist': args.use_max_dist, 
     'use_rd': args.use_rd, 
     'RNI': args.RNI
 }
-if True:
-    model = eval(args.model)(dataset, **kwargs)
-else:
-    model = DGCNN(
-        dataset, 
-        latent_dim=[32, 32, 32, 1], 
-        k=0.6, 
-        adj_dropout=0, 
-        regression=True
-    )
+
+model = eval(args.model)(dataset, **kwargs)
 print('Using ' + model.__class__.__name__ + ' model')
-    
 model = model.to(device)
 
-
 optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer, factor=args.lr_decay_factor, patience=args.patience, min_lr=0.00001)
 
-if model.__class__.__name__ == 'PPGN':
-    scheduler = torch.optim.lr_scheduler.StepLR(
-        optimizer, step_size=20, gamma=0.8
-    )
-    print('Using StepLR scheduler...')
-else:
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, factor=args.lr_decay_factor, patience=args.patience, min_lr=0.00001)
 
 def train(epoch):
     model.train()
@@ -381,10 +332,7 @@ def train(epoch):
         else:
             y = data.y
 
-        if model.__class__.__name__ == 'PPGN':
-            loss = F.l1_loss(model(data), y)
-        else:
-            loss = F.mse_loss(model(data), y)
+        loss = F.mse_loss(model(data), y)
 
         loss.backward()
         loss_all += loss * num_graphs
@@ -417,10 +365,7 @@ def loop(start=1, best_val_error=None):
         lr = scheduler.optimizer.param_groups[0]['lr']
         loss = train(epoch)
         val_error = test(val_loader)
-        if model.__class__.__name__ == 'PPGN':
-            scheduler.step()
-        else:
-            scheduler.step(val_error)
+        scheduler.step(val_error)
 
         if best_val_error is None:
             best_val_error = val_error
@@ -444,12 +389,15 @@ def loop(start=1, best_val_error=None):
     start = epoch + 1
     return start, best_val_error, log
 
+
 best_val_error = None
 start = 1
 start, best_val_error, log = loop(start, best_val_error)
 print(cmd_input[:-1])
 print(log)
-'''
+
+# uncomment the below to keep training even reaching epochs
+''' 
 while True:
     start, best_val_error, log = loop(start, best_val_error)
     print(cmd_input[:-1])

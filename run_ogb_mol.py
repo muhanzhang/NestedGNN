@@ -1,7 +1,3 @@
-import torch
-import torch.optim as optim
-import torch.nn.functional as F
-
 from tqdm import tqdm
 import sys, os
 from shutil import copy
@@ -15,25 +11,24 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+import torch
+import torch.optim as optim
+import torch.nn.functional as F
 from torch_geometric.transforms import Compose
 from torch_geometric.utils import to_networkx
 from torch_geometric.data import DataListLoader
-
-### importing OGB
 from ogb.graphproppred import Evaluator
-from dataset_pyg import PygGraphPropPredDataset  # customized to support data list
 
+from dataset_pyg import PygGraphPropPredDataset  # customized to support data list
 from dataloader import DataLoader  # use a custom dataloader to handle subgraphs
 from utils import create_subgraphs, return_prob
-
-from attacks import *
-from ogb_mol_gnn import PPGN
-
+from ogb_mol_gnn import GNN, PPGN
 from gine_operations import ClassifierNetwork
 
 cls_criterion = torch.nn.BCEWithLogitsLoss
 reg_criterion = torch.nn.MSELoss
 multicls_criterion = torch.nn.CrossEntropyLoss
+
 
 def train(model, device, loader, optimizer, task_type):
     model.train()
@@ -58,10 +53,7 @@ def train(model, device, loader, optimizer, task_type):
         else:
             train_criterion = reg_criterion
 
-        if args.multiple_h is not None:
-            y = batch[args.h[0]].y
-        else:
-            y = batch.y
+        y = batch.y
 
         if task_type == 'multiclass classification':
             y = y.view(-1, )
@@ -70,22 +62,14 @@ def train(model, device, loader, optimizer, task_type):
 
         is_labeled = y == y
 
-        if args.attack is None:
-            pred = model(batch)
-            optimizer.zero_grad()
+        pred = model(batch)
+        optimizer.zero_grad()
 
-            ## ignore nan targets (unlabeled) when computing training loss.
-            loss = train_criterion()(pred.to(torch.float32)[is_labeled], 
-                                     y[is_labeled])
-            loss.backward()
-            optimizer.step()
-        elif args.attack == 'flag':
-            forward = lambda perturb : model(batch, perturb).to(torch.float32)[is_labeled]
-            model_forward = (model, forward)
-            y = y.to(torch.float32)[is_labeled]
-            perturb_shape = (batch.x.shape[0], args.emb_dim)
-            loss, _ = flag(model_forward, perturb_shape, y, args, optimizer, 
-                           device, train_criterion())
+        ## ignore nan targets (unlabeled) when computing training loss.
+        loss = train_criterion()(pred.to(torch.float32)[is_labeled], 
+                                 y[is_labeled])
+        loss.backward()
+        optimizer.step()
         total_loss += loss.item() * y.shape[0]
     return total_loss / len(loader.dataset)
 
@@ -119,10 +103,7 @@ def eval(model, device, loader, evaluator, return_loss=False,
                 with torch.no_grad():
                     pred = model(batch)
 
-                if args.multiple_h is not None:
-                    y = batch[args.h[0]].y
-                else:
-                    y = batch.y
+                y = batch.y
 
                 if task_type == 'multiclass classification':
                     y = y.view(-1, )
@@ -209,49 +190,49 @@ def visualize(dataset, save_path, name='vis', number=20, loss=None, sort=True):
             pdb.set_trace()
 
 
-# Training settings
-parser = argparse.ArgumentParser(description='Nested GNN')
-parser.add_argument('--runs', type=int, default=1)
+# General settings.
+parser = argparse.ArgumentParser(description='Nested GNN for OGB molecular graphs')
+parser.add_argument('--dataset', type=str, default="ogbg-molhiv",
+                    help='dataset name (ogbg-molhiv, ogbg-molpcba, etc.)')
+parser.add_argument('--runs', type=int, default=1, help='how many repeated runs')
+
+# Base GNN settings.
 parser.add_argument('--gnn', type=str, default='gin',
                     help='gin, gcn, ppgn, gine+')
 parser.add_argument('--virtual_node', type=bool, default=True, 
-                    help='enable using virtual node')
+                    help='enable using virtual node, default true')
 parser.add_argument('--residual', action='store_true', default=False, 
                     help='enable residual connections between layers')
-parser.add_argument('--h', type=int, default=None, help='hop of enclosing subgraph;\
-                    if None, will not use NestedGNN')
-parser.add_argument('--multiple_h', type=str, default=None, 
-                    help='use multiple hops of enclosing subgraphs, example input:\
-                    "2,3", which will overwrite h with a list [2, 3]')
-parser.add_argument('--node_label', type=str, default='spd', 
-                    help='apply labeling trick to nodes within each subgraph, use node\
-                    labels as additional node features; support "hop", "drnl", "spd", \
-                    for "spd", you can specify number of spd to keep by "spd3", "spd4", \
-                    "spd5", etc. Default "spd"=="spd2".')
-parser.add_argument('--use_rd', action='store_true', default=False, 
-                    help='use resistance distance as additional node labels')
-parser.add_argument('--use_rp', type=int, default=None, 
-                    help='use RW return probability as additional node features,\
-                    specify num of RW steps here')
 parser.add_argument('--RNI', action='store_true', default=False, 
-                    help='use node randomly initialized node features in [-1, 1]')
+                    help='use randomly initialized node features in [-1, 1]')
 parser.add_argument('--adj_dropout', type=float, default=0,
                     help='adjacency matrix dropout ratio (default: 0)')
 parser.add_argument('--drop_ratio', type=float, default=0.5,
                     help='dropout ratio (default: 0.5)')
 parser.add_argument('--num_layer', type=int, default=5,
                     help='number of GNN message passing layers (default: 5)')
-parser.add_argument('--num_more_layer', type=int, default=2,
-                    help='for multiple_h, number of more GNN layers than each h,\
-                    num_layer = h + num_more_layer')
-parser.add_argument('--sum_multi_hop_embedding', action='store_true', default=False, 
-                    help='sum graph embeddings from multiple_h instead of concatenate')
-parser.add_argument('--graph_pooling', type=str, default="mean")
-parser.add_argument('--subgraph_pooling', type=str, default="mean")
-parser.add_argument('--center_pool_virtual', action='store_true', default=False) 
-parser.add_argument('--nonlinear_after_subpool', action='store_true', default=False) 
 parser.add_argument('--emb_dim', type=int, default=300,
                     help='dimensionality of hidden units in GNNs (default: 300)')
+
+# Nested GNN settings.
+parser.add_argument('--h', type=int, default=None, help='height of rooted subgraph;\
+                    if not None, will extract h-hop rooted subgraphs and use Nested GNN')
+parser.add_argument('--subgraph_pooling', type=str, default="mean", 
+                    help='mean, sum, center, max, attention')
+parser.add_argument('--graph_pooling', type=str, default="mean", 
+                    help='mean, sum, set2set, max, attention')
+parser.add_argument('--node_label', type=str, default='spd', 
+                    help='apply distance encoding to nodes within each subgraph, use node\
+                    labels as additional node features; support "hop", "drnl", "spd", \
+                    for "spd", you can specify number of spd to keep by "spd3", "spd4", \
+                    "spd5", etc. Default "spd"=="spd2".')
+parser.add_argument('--use_rd', action='store_true', default=False, 
+                    help='use resistance distance as additional continuous node labels')
+parser.add_argument('--use_rp', type=int, default=None, 
+                    help='use RW return probability as additional node features,\
+                    specify num of RW steps here')
+
+# Training settings.
 parser.add_argument('--batch_size', type=int, default=32,
                     help='input batch size for training (default: 32)')
 parser.add_argument('--epochs', type=int, default=100,
@@ -260,38 +241,37 @@ parser.add_argument('--lr', type=float, default=1E-3)
 parser.add_argument('--lr_decay_factor', type=float, default=0.5)
 parser.add_argument('--num_workers', type=int, default=2,
                     help='number of workers (default: 2)')
-parser.add_argument('--dataset', type=str, default="ogbg-molhiv",
-                    help='dataset name (ogbg-molhiv, ogbg-molpcba, etc.)')
-parser.add_argument('--feature', type=str, default="full",
-                    help='full feature or simple feature')
 parser.add_argument('--ensemble', action='store_true', default=False,
-                    help='if True, load a series of model checkpoints and ensemble the results')
-parser.add_argument('--ensemble_lookback', type=int, default=50,
+                    help='load a series of model checkpoints and ensemble the results')
+parser.add_argument('--ensemble_lookback', type=int, default=90,
                     help='how many epochs to look back in ensemble')
 parser.add_argument('--ensemble_interval', type=int, default=10,
                     help='ensemble every x epochs')
 parser.add_argument('--scheduler', action='store_true', default=False, 
                     help='use a scheduler to reduce learning rate')
+
+# Log settings.
 parser.add_argument('--save_appendix', type=str, default='',
                     help='appendix to save results')
-parser.add_argument('--log_steps', type=int, default=10)
+parser.add_argument('--log_steps', type=int, default=10, 
+                    help='save model checkpoint every x epochs')
 parser.add_argument('--continue_from', type=int, default=None, 
                     help="from which epoch's checkpoint to continue training")
 parser.add_argument('--run_from', type=int, default=1, 
-                    help="from which run (of multiple experiments) to start")
+                    help="from which run (of multiple repeated experiments) to start")
+
+# Visualization settings.
 parser.add_argument('--visualize_all', action='store_true', default=False, 
                     help='visualize all graphs in dataset sequentially')
 parser.add_argument('--visualize_test', action='store_true', default=False, 
                     help='visualize test graphs by loss')
 parser.add_argument('--pre_visualize', action='store_true', default=False)
-# FLAG settings
-parser.add_argument('--attack', type=str, default=None, help='flag')
-parser.add_argument('--step_size', type=float, default=1e-3)
-parser.add_argument('--m', type=int, default=3)
 args = parser.parse_args()
+
 
 device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
 
+# Save directory.
 if args.save_appendix == '':
     args.save_appendix = '_' + time.strftime("%Y%m%d%H%M%S")
 args.res_dir = 'results/{}{}'.format(args.dataset, args.save_appendix)
@@ -312,20 +292,12 @@ with open(log_file, 'a') as f:
     f.write('\n' + cmd_input)
 
 
-if args.multiple_h is not None:
-    from ogb_mol_gnn import NestedGNN as GNN
-    args.h = [int(h) for h in args.multiple_h.split(',')]
-    args.num_workers = 0  # otherwise memory tend to leak
-else:
-    from ogb_mol_gnn import GNN
-
+# Rooted subgraph extraction for NGNN.
 path = 'data/'
 pre_transform = None
 if args.h is not None:
     if type(args.h) == int:
         path += '/ngnn_h' + str(args.h)
-    elif type(args.h) == list:
-        path += '/ngnn_h' + ''.join(str(h) for h in args.h)
     path += '_' + args.node_label
     if args.use_rd:
         path += '_rd'
@@ -333,7 +305,7 @@ if args.h is not None:
         return create_subgraphs(g, args.h, node_label=args.node_label, 
                                 use_rd=args.use_rd)
 
-if args.use_rp is not None:  # use RW return probability as additional features
+if args.use_rp is not None:
     path += f'_rp{args.use_rp}'
     if pre_transform is None:
         pre_transform = return_prob(args.use_rp)
@@ -341,30 +313,19 @@ if args.use_rp is not None:  # use RW return probability as additional features
         pre_transform = Compose([return_prob(args.use_rp), pre_transform])
 
 transform = None
-if args.dataset == 'ogbg-ppa':
+if args.dataset == 'ogbg-ppa':  # ppa is too slow to process currently for NGNN
     def add_zeros(data):
         data.x = torch.zeros(data.num_nodes, dtype=torch.long)
         return data
     transform = add_zeros
 
 
-### automatic dataloading and splitting
 dataset = PygGraphPropPredDataset(
     name=args.dataset, root=path, transform=transform, pre_transform=pre_transform, 
-    skip_collate=args.multiple_h is not None)
-
-if args.feature == 'full':
-    pass 
-elif args.feature == 'simple':
-    print('using simple feature')
-    # only retain the top two node/edge features
-    two_or_three = 3 if args.use_hop_label else 2
-    dataset.data.x = dataset.data.x[:,:two_or_three]
-    dataset.data.edge_attr = dataset.data.edge_attr[:,:2]
+    skip_collate=False)
 
 split_idx = dataset.get_idx_split()
 
-### automatic evaluator. takes dataset name as input
 evaluator = Evaluator(args.dataset)
 
 train_loader = DataLoader(dataset[split_idx["train"]], batch_size=args.batch_size, 
@@ -378,20 +339,13 @@ if args.pre_visualize:
     visualize(dataset, args.res_dir)
 
 kwargs = {
-        'node_label': args.node_label, 
-        'use_rd': args.use_rd, 
-        'use_rp': args.use_rp, 
-        'adj_dropout': args.adj_dropout, 
-        'graph_pooling': args.graph_pooling, 
-        "subgraph_pooling": args.subgraph_pooling, 
-        'num_layer': args.num_layer, 
-        'residual': args.residual, 
-        'center_pool_virtual': args.center_pool_virtual, 
-        'nonlinear_after_subpool': args.nonlinear_after_subpool, 
-        # required when using multiple_h
-        'num_more_layer': args.num_more_layer, 
-        'hs': args.h, 
-        'sum_multi_hop_embedding': args.sum_multi_hop_embedding, 
+    'num_layer': args.num_layer, 
+    'residual': args.residual, 
+    'use_rd': args.use_rd, 
+    'use_rp': args.use_rp, 
+    'adj_dropout': args.adj_dropout, 
+    'subgraph_pooling': args.subgraph_pooling, 
+    'graph_pooling': args.graph_pooling, 
 }
 
 if args.gnn.startswith('gin'):
@@ -412,14 +366,15 @@ for run in range(start_run, start_run + runs):
         model = ClassifierNetwork(hidden=args.emb_dim,
                                   out_dim=num_classes,
                                   layers=args.num_layer,
-                                  #layers=args.h, 
                                   dropout=args.drop_ratio,
                                   virtual_node=args.virtual_node,
-                                  #k=args.h-2,
                                   k=3,
                                   conv_type='gin+', 
                                   nested=args.h is not None).to(device)
+        torch.cuda.set_device(0)
     else:
+        # the GNN class can automatically switch between GNN and NGNN depending on
+        # whether the input data contain 'node_to_subgraph' and 'subgraph_to_graph'
         model = GNN(args.dataset, num_classes, gnn_type=gnn_type, emb_dim=args.emb_dim, 
                     drop_ratio=args.drop_ratio, virtual_node=args.virtual_node, 
                     RNI=args.RNI, **kwargs).to(device)
@@ -508,7 +463,6 @@ for run in range(start_run, start_run + runs):
     with open(log_file, 'a') as f:
         print(final_res, file=f)
 
-
     if args.ensemble:
         print('Start ensemble testing...')
         start_epoch, end_epoch = args.epochs - args.ensemble_lookback, args.epochs
@@ -527,7 +481,6 @@ for run in range(start_run, start_run + runs):
         print(ensemble_res)
         with open(log_file, 'a') as f:
             print(ensemble_res, file=f)
-
 
     if args.ensemble:
         valid_perfs.append(ensemble_valid_perf)

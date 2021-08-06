@@ -15,42 +15,12 @@ from batch import Batch
 from collections import defaultdict
 
 
-class return_prob(object):
-    def __init__(self, steps=50):
-        self.steps = steps
-
-    def __call__(self, data):
-        adj = to_scipy_sparse_matrix(data.edge_index, num_nodes=data.num_nodes).tocsr()
-        adj += ssp.identity(data.num_nodes, dtype='int', format='csr')
-        rp = np.empty([data.num_nodes, self.steps])
-        inv_deg = ssp.lil_matrix((data.num_nodes, data.num_nodes))
-        inv_deg.setdiag(1 / adj.sum(1))
-        P = inv_deg * adj
-        if self.steps < 5:
-            Pi = P
-            for i in range(self.steps):
-                rp[:, i] = Pi.diagonal()
-                Pi = Pi * P
-        else:
-            inv_sqrt_deg = ssp.lil_matrix((data.num_nodes, data.num_nodes))
-            inv_sqrt_deg.setdiag(1 / (np.array(adj.sum(1)) ** 0.5))
-            B = inv_sqrt_deg * adj * inv_sqrt_deg
-            L, U = eigh(B.todense())
-            W = U * U
-            Li = L
-            for i in range(self.steps):
-                rp[:, i] = W.dot(Li)
-                Li = Li * L
-
-        data.rp = torch.FloatTensor(rp)
-
-        return data
-            
-
 def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
                      node_label='hop', use_rd=False, subgraph_pretransform=None):
-    # Given a PyG graph data, extract an h-hop enclosing subgraph for each of its
+    # Given a PyG graph data, extract an h-hop rooted subgraph for each of its
     # nodes, and combine these node-subgraphs into a new large disconnected graph
+    # If given a list of h, will return multiple subgraphs for each node stored in
+    # a dict.
 
     if type(h) == int:
         h = [h]
@@ -87,7 +57,10 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
                 data_.node_type = node_type_
 
             if use_rd:
-                adj = to_scipy_sparse_matrix(edge_index_, num_nodes=nodes_.shape[0]).tocsr()
+                # See "Link prediction in complex networks: A survey".
+                adj = to_scipy_sparse_matrix(
+                    edge_index_, num_nodes=nodes_.shape[0]
+                ).tocsr()
                 laplacian = ssp.csgraph.laplacian(adj).toarray()
                 try:
                     L_inv = linalg.pinv(laplacian)
@@ -100,18 +73,21 @@ def create_subgraphs(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None,
                 rd_to_x = torch.FloatTensor((lxx + lyy - lxy - lyx)).unsqueeze(1)
                 data_.rd = rd_to_x
 
-            if subgraph_pretransform is not None:
+            if subgraph_pretransform is not None:  # for k-gnn
                 data_ = subgraph_pretransform(data_)
                 if 'assignment_index_2' in data_:
-                    data_.batch_2 = torch.zeros(data_.iso_type_2.shape[0], dtype=torch.long)
+                    data_.batch_2 = torch.zeros(
+                        data_.iso_type_2.shape[0], dtype=torch.long
+                    )
                 if 'assignment_index_3' in data_:
-                    data_.batch_3 = torch.zeros(data_.iso_type_3.shape[0], dtype=torch.long)
+                    data_.batch_3 = torch.zeros(
+                        data_.iso_type_3.shape[0], dtype=torch.long
+                    )
 
             subgraphs.append(data_)
 
-        # new_data is a treated as a big disconnected graph of the batch of subgraphs
+        # new_data is treated as a big disconnected graph of the batch of subgraphs
         new_data = Batch.from_data_list(subgraphs)
-        #new_data.y = data.y
         new_data.num_nodes = sum(data_.num_nodes for data_ in subgraphs)
         new_data.num_subgraphs = len(subgraphs)
         
@@ -205,9 +181,14 @@ def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
         z = hop.unsqueeze(1)
     elif node_label.startswith('spd') or node_label == 'drnl':
         if node_label.startswith('spd'):
+            # keep top k shortest-path distances
             num_spd = int(node_label[3:]) if len(node_label) > 3 else 2
-            z = torch.zeros([subset.size(0), num_spd], dtype=torch.long, device=row.device)
+            z = torch.zeros(
+                [subset.size(0), num_spd], dtype=torch.long, device=row.device
+            )
         elif node_label == 'drnl':
+            # see "Link Prediction Based on Graph Neural Networks", a special
+            # case of spd2
             num_spd = 2
             z = torch.zeros([subset.size(0), 1], dtype=torch.long, device=row.device)
 
@@ -238,171 +219,8 @@ def k_hop_subgraph(node_idx, num_hops, edge_index, relabel_nodes=False,
     return subset, edge_index, edge_mask, z
 
 
-def k_hop_subgraph_old(node_idx, num_hops, edge_index, relabel_nodes=False,
-                   num_nodes=None, flow='source_to_target', return_hop=False):
-    r"""Computes the :math:`k`-hop subgraph of :obj:`edge_index` around node
-    :attr:`node_idx`.
-    It returns (1) the nodes involved in the subgraph, (2) the filtered
-    :obj`edge_index` connectivity, and (3) the edge mask indicating which edges
-    were preserved.
-
-    Args:
-        node_idx (int): The central node.
-        num_hops: (int): The number of hops :math:`k`.
-        edge_index (LongTensor): The edge indices.
-        relabel_nodes (bool, optional): If set to :obj:`True`, the resulting
-            :obj:`edge_index` will be relabeled to hold consecutive indices
-            starting from zero. (default: :obj:`False`)
-        num_nodes (int, optional): The number of nodes, *i.e.*
-            :obj:`max_val + 1` of :attr:`edge_index`. (default: :obj:`None`)
-        flow (string, optional): The flow direction of :math:`k`-hop
-            aggregation (:obj:`"source_to_target"` or
-            :obj:`"target_to_source"`). (default: :obj:`"source_to_target"`)
-
-    :rtype: (:class:`LongTensor`, :class:`LongTensor`, :class:`BoolTensor`)
-    """
-
-    num_nodes = maybe_num_nodes(edge_index, num_nodes)
-
-    assert flow in ['source_to_target', 'target_to_source']
-    if flow == 'target_to_source':
-        row, col = edge_index
-    else:
-        col, row = edge_index
-
-    node_mask = row.new_empty(num_nodes, dtype=torch.bool)
-    edge_mask = row.new_empty(row.size(0), dtype=torch.bool)
-
-    subsets = [torch.tensor([node_idx], device=row.device).flatten()]
-    if return_hop:
-        hops = [torch.LongTensor([0], device=row.device).flatten()]
-    for h in range(num_hops):
-        node_mask.fill_(False)
-        node_mask[subsets[-1]] = True
-        torch.index_select(node_mask, 0, row, out=edge_mask)
-        new_nodes = col[edge_mask]
-        subsets.append(new_nodes)
-        if return_hop:
-            hops.append(torch.LongTensor([h+1] * len(new_nodes), device=row.device))
-    subset, inverse_map = torch.cat(subsets).unique(return_inverse=True)
-    if return_hop:
-        hops = torch.cat(hops)
-        hop = scatter_min(hops, inverse_map)[0]
-    # Add `node_idx` to the beginning of `subset`.
-    subset = subset[subset != node_idx]
-    subset = torch.cat([torch.tensor([node_idx], device=row.device), subset])
-    if return_hop:
-        hop = hop[hop != 0]
-        hop = torch.cat([torch.LongTensor([0], device=row.device), hop])
-
-    node_mask.fill_(False)
-    node_mask[subset] = True
-    edge_mask = node_mask[row] & node_mask[col]
-
-    edge_index = edge_index[:, edge_mask]
-
-    if relabel_nodes:
-        node_idx = row.new_full((num_nodes, ), -1)
-        node_idx[subset] = torch.arange(subset.size(0), device=row.device)
-        edge_index = node_idx[edge_index]
-
-    if return_hop:
-        return subset, edge_index, edge_mask, hop
-    return subset, edge_index, edge_mask
-
-
-# Copied from master PyG
-def k_hop_subgraph_old2(node_idx, num_hops, edge_index, relabel_nodes=False,
-                   num_nodes=None, flow='source_to_target'):
-    r"""Computes the :math:`k`-hop subgraph of :obj:`edge_index` around node
-    :attr:`node_idx`.
-    It returns (1) the nodes involved in the subgraph, (2) the filtered
-    :obj`edge_index` connectivity, and (3) the edge mask indicating which edges
-    were preserved.
-
-    Args:
-        node_idx (int): The central node.
-        num_hops: (int): The number of hops :math:`k`.
-        edge_index (LongTensor): The edge indices.
-        relabel_nodes (bool, optional): If set to :obj:`True`, the resulting
-            :obj:`edge_index` will be relabeled to hold consecutive indices
-            starting from zero. (default: :obj:`False`)
-        num_nodes (int, optional): The number of nodes, *i.e.*
-            :obj:`max_val + 1` of :attr:`edge_index`. (default: :obj:`None`)
-        flow (string, optional): The flow direction of :math:`k`-hop
-            aggregation (:obj:`"source_to_target"` or
-            :obj:`"target_to_source"`). (default: :obj:`"source_to_target"`)
-
-    :rtype: (:class:`LongTensor`, :class:`LongTensor`, :class:`BoolTensor`)
-    """
-
-    num_nodes = maybe_num_nodes(edge_index, num_nodes)
-
-    assert flow in ['source_to_target', 'target_to_source']
-    if flow == 'target_to_source':
-        row, col = edge_index
-    else:
-        col, row = edge_index
-
-    node_mask = row.new_empty(num_nodes, dtype=torch.bool)
-    edge_mask = row.new_empty(row.size(0), dtype=torch.bool)
-
-    subsets = [torch.tensor([node_idx], device=row.device).flatten()]
-    for _ in range(num_hops):
-        node_mask.fill_(False)
-        node_mask[subsets[-1]] = True
-        torch.index_select(node_mask, 0, row, out=edge_mask)
-        subsets.append(col[edge_mask])
-    subset = torch.cat(subsets).unique()
-    # Add `node_idx` to the beginning of `subset`.
-    subset = subset[subset != node_idx]
-    subset = torch.cat([torch.tensor([node_idx], device=row.device), subset])
-
-    node_mask.fill_(False)
-    node_mask[subset] = True
-    edge_mask = node_mask[row] & node_mask[col]
-
-    edge_index = edge_index[:, edge_mask]
-
-    if relabel_nodes:
-        node_idx = row.new_full((num_nodes, ), -1)
-        node_idx[subset] = torch.arange(subset.size(0), device=row.device)
-        edge_index = node_idx[edge_index]
-
-    return subset, edge_index, edge_mask
-
-
 def maybe_num_nodes(index, num_nodes=None):
 	return index.max().item() + 1 if num_nodes is None else num_nodes
-
-
-def create_subgraphs_old(data, h=1, sample_ratio=1.0, max_nodes_per_hop=None):
-    # Given a PyG graph data, extract an h-hop enclosing subgraph for each of its
-    # nodes, and combine these node-subgraphs into a new large disconnected graph
-
-    assert(isinstance(data, Data))
-    x, edge_index, num_nodes = data.x, data.edge_index, data.num_nodes
-    A = ssp.csr_matrix(
-        ([1] * edge_index.shape[1], (edge_index[0].cpu(), edge_index[1].cpu())), 
-        shape=(num_nodes, num_nodes),
-    )
-    subgraphs = []
-    for ind in range(num_nodes):
-        subgraph, features = subgraph_extraction_labeling(
-            ind, A, h, sample_ratio, max_nodes_per_hop, x
-        )
-        # convert csr subgraph back to edge_index
-        subgraph = subgraph.tocoo()
-        subgraph_edge_index = torch.LongTensor(
-            [subgraph.row, subgraph.col]
-        ).to(edge_index.device)
-        subgraph = Data(features, subgraph_edge_index)
-        subgraphs.append(subgraph)
-
-    new_data = Batch.from_data_list(subgraphs)
-    new_data.y = data.y
-    del new_data.batch
-    return new_data
 
 
 def neighbors(fringe, A):
@@ -416,46 +234,37 @@ def neighbors(fringe, A):
     return res
 
 
-def subgraph_extraction_labeling(
-    ind, 
-    A, 
-    h=1, 
-    sample_ratio=1.0, 
-    max_nodes_per_hop=None, 
-    features=None
-):
-    # Extract the h-hop enclosing subgraph around node 'ind' from graph A
-    dist = 0
-    nodes = [ind]
-    dists = [0]
-    visited = set([ind])
-    fringe = set([ind])
-    for dist in range(1, h+1):
-        fringe = neighbors(fringe, A)
-        fringe = fringe - visited
-        visited = visited.union(fringe)
-        if sample_ratio < 1.0:
-            fringe = random.sample(fringe, int(sample_ratio*len(fringe)))
-        if max_nodes_per_hop is not None:
-            if max_nodes_per_hop < len(fringe):
-                fringe = random.sample(fringe, max_nodes_per_hop)
-        if len(fringe) == 0:
-            break
-        nodes = nodes + list(fringe)
-        dists = dists + [dist] * len(fringe)
-    subgraph = A[nodes, :][:, nodes]
+class return_prob(object):
+    def __init__(self, steps=50):
+        self.steps = steps
 
-    # get node features
-    if features is not None:
-        features = features[nodes]
-        # concatenate dists with features
-        dists = torch.FloatTensor(dists).unsqueeze(1).to(features.device)
-        dists = dists / h  # normalize
-        features = torch.cat([dists, features], 1)
-    else:
-        features = torch.FloatTensor(dists).unsqueeze(1) / h
+    def __call__(self, data):
+        adj = to_scipy_sparse_matrix(data.edge_index, num_nodes=data.num_nodes).tocsr()
+        adj += ssp.identity(data.num_nodes, dtype='int', format='csr')
+        rp = np.empty([data.num_nodes, self.steps])
+        inv_deg = ssp.lil_matrix((data.num_nodes, data.num_nodes))
+        inv_deg.setdiag(1 / adj.sum(1))
+        P = inv_deg * adj
+        if self.steps < 5:
+            Pi = P
+            for i in range(self.steps):
+                rp[:, i] = Pi.diagonal()
+                Pi = Pi * P
+        else:
+            inv_sqrt_deg = ssp.lil_matrix((data.num_nodes, data.num_nodes))
+            inv_sqrt_deg.setdiag(1 / (np.array(adj.sum(1)) ** 0.5))
+            B = inv_sqrt_deg * adj * inv_sqrt_deg
+            L, U = eigh(B.todense())
+            W = U * U
+            Li = L
+            for i in range(self.steps):
+                rp[:, i] = W.dot(Li)
+                Li = Li * L
 
-    return subgraph, features
+        data.rp = torch.FloatTensor(rp)
+
+        return data
+            
 
 
 
