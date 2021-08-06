@@ -77,6 +77,8 @@ To reproduce Appendix C Figure 3, run the following commands:
 
     python run_simulation.py --n 10 20 40 80 160 320 640 1280 --save_appendix _graph --N 100 --h 10 --graph
 
+The results will be saved in "results/simulation\_node/" and "results/simulation\_graph/".
+
 
 Miscellaneous
 -------------

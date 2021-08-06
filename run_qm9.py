@@ -69,13 +69,9 @@ class MyTransform(object):
         self.pre_convert = pre_convert
 
     def __call__(self, data):
-        if args.multiple_h is not None:
-            if self.pre_convert:  # convert back to original units
-                data[args.h[0]].y = data[args.h[0]].y / conversion
-        else:
-            data.y = data.y[:, int(args.target)]  # Specify target: 0 = mu
-            if self.pre_convert:  # convert back to original units
-                data.y = data.y / conversion[int(args.target)]
+        data.y = data.y[:, int(args.target)]  # Specify target: 0 = mu
+        if self.pre_convert:  # convert back to original units
+            data.y = data.y / conversion[int(args.target)]
         return data
 
 
@@ -327,10 +323,7 @@ def train(epoch):
             data = data.to(device)
             num_graphs = data.num_graphs
         optimizer.zero_grad()
-        if args.multiple_h is not None:
-            y = data[args.h[0]].y[:, int(args.target)]
-        else:
-            y = data.y
+        y = data.y
 
         loss = F.mse_loss(model(data), y)
 
@@ -349,10 +342,7 @@ def test(loader):
             data = {key: data_.to(device) for key, data_ in data.items()}
         else:
             data = data.to(device)
-        if args.multiple_h is not None:
-            y = data[args.h[0]].y[:, int(args.target)]
-        else:
-            y = data.y
+        y = data.y
         error += ((model(data) * std[target].cuda()) -
                   (y * std[target].cuda())).abs().sum().item()  # MAE
     return error / len(loader.dataset)
