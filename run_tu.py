@@ -17,7 +17,7 @@ from kernel.gin import *
 from kernel.gat import *
 from kernel.graclus import Graclus
 from kernel.top_k import TopK
-from kernel.diff_pool import DiffPool
+from kernel.diff_pool import *
 from kernel.global_attention import GlobalAttentionNet
 from kernel.set2set import Set2SetNet
 from kernel.sort_pool import SortPool
@@ -115,6 +115,7 @@ print('Command line input: ' + cmd_input + ' is saved.')
 
 if args.data == 'all':
     datasets = [ 'DD', 'MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
+    datasets = [ 'MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
 else:
     datasets = [args.data]
 
@@ -125,7 +126,7 @@ if args.search:
         hs = [None]
     else:
         layers = [3, 4, 5, 6]
-        hiddens = [32]
+        hiddens = [32, 32, 32, 32]
         hs = [2, 3, 4, 5]
 else:
     layers = [args.layers]
@@ -162,6 +163,9 @@ for dataset_name, Net in product(datasets, nets):
     else:
         combinations = product(layers, hiddens, hs)
     for num_layers, hidden, h in combinations:
+        if dataset_name == 'DD' and Net.__name__ == 'NestedGAT' and h >= 5:
+            print('NestedGAT on DD will OOM for h >= 5. Skipped.')
+            continue
         log = "Using {} layers, {} hidden units, h = {}".format(num_layers, hidden, h)
         print(log)
         logger(log)

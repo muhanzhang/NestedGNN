@@ -84,3 +84,11 @@ Miscellaneous
 -------------
 
 We have tried our best to clean the code. We will keep polishing it after the author response. If you encounter any errors or bugs, please let us know in OpenReview. Hope you enjoy NGNN and the code!
+
+
+TODO
+----
+
+1. Write a doc and plot a graph to explain the NGNN data structure defined in utils.py
+
+2. Make pretransform to NGNN data structure parallel.
