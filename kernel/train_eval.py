@@ -207,7 +207,7 @@ def k_fold(dataset, folds):
     skf = StratifiedKFold(folds, shuffle=True, random_state=12345)
 
     test_indices, train_indices = [], []
-    for _, idx in skf.split(torch.zeros(len(dataset)), dataset.data.y):
+    for _, idx in skf.split(torch.zeros(len(dataset)), dataset.data.y[dataset.indices()]):
         test_indices.append(torch.from_numpy(idx))
 
     val_indices = [test_indices[i - 1] for i in range(folds)]
