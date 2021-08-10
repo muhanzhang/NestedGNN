@@ -34,7 +34,8 @@ class NestedDiffPool(torch.nn.Module):
         self.pool_block1 = Block(hidden, hidden, num_nodes)
         self.embed_blocks = torch.nn.ModuleList()
         self.pool_blocks = torch.nn.ModuleList()
-        for i in range((num_layers // 2) - 1):
+        #for i in range((num_layers // 2) - 1):
+        for i in range(0):
             num_nodes = ceil(0.25 * num_nodes)
             self.embed_blocks.append(Block(hidden, hidden, hidden))
             self.pool_blocks.append(Block(hidden, hidden, num_nodes))

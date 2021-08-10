@@ -8,7 +8,8 @@ Nested Graph Neural Network (NGNN) is a general framework to improve a base GNN'
 Requirements
 ------------
 Stable: Python 3.8 + PyTorch 1.8.1 + PyTorch\_Geometric 1.7.0 + OGB 1.3.1
-Latest: Python 3.8 + PyTorch 1.9.0 + PyTorch\_Geometric 1.7.2 + OGB 1.3.1 (GINE+ and its nested version not trainable with this configuration)
+
+Latest: Python 3.8 + PyTorch 1.9.0 + PyTorch\_Geometric 1.7.2 + OGB 1.3.1
 
 Install [PyTorch](https://pytorch.org/)
 
@@ -37,11 +38,18 @@ To run Nested GCN on MUTAG (with subgraph height=3 and base GCN #layers=4), type
 
     python run_tu.py --model NestedGCN --h 3 --layers 4 --node_label spd --use_rd --data MUTAG
 
-To compare with a base GCN model only, type:
+To compare it with a base GCN model only, type:
 
     python run_tu.py --model GCN --layers 4 --data MUTAG
 
-Use "--data all" and "--model all" to run all models (NestedGCN, NestedGraphSAGE, NestedGIN, NestedGAT) on all datasets.
+To reproduce the added experiments with hyperparameter searching, type:
+
+    python run_tu.py --model GCN --search --data MUTAG 
+
+    python run_tu.py --model NestedGCN --h 0 --search --node_label spd --use_rd --data MUTAG
+
+Replace with "--data all" and "--model all" to run all models (NestedGCN, NestedGraphSAGE, NestedGIN, NestedGAT) on all datasets.
+
 
 ### QM9
 
@@ -83,12 +91,12 @@ The results will be saved in "results/simulation\_node/" and "results/simulation
 Miscellaneous
 -------------
 
-We have tried our best to clean the code. We will keep polishing it after the author response. If you encounter any errors or bugs, please let us know in OpenReview. Hope you enjoy NGNN and the code!
+We have tried our best to clean the code. We will keep polishing it after the author response. If you encounter any errors or bugs, please let us know in OpenReview. Hope you enjoy the code!
 
 
 TODO
 ----
 
-1. Write a doc and plot a graph to explain the NGNN data structure defined in utils.py
+1. Write a doc or plot a graph to explain the NGNN data structure defined in utils.py
 
 2. Make pretransform to NGNN data structure parallel.

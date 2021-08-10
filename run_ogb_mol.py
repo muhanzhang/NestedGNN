@@ -23,7 +23,7 @@ from dataset_pyg import PygGraphPropPredDataset  # customized to support data li
 from dataloader import DataLoader  # use a custom dataloader to handle subgraphs
 from utils import create_subgraphs, return_prob
 from ogb_mol_gnn import GNN, PPGN
-from gine_operations import ClassifierNetwork
+from modules.gine_operations import ClassifierNetwork
 
 cls_criterion = torch.nn.BCEWithLogitsLoss
 reg_criterion = torch.nn.MSELoss

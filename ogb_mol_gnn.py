@@ -12,8 +12,8 @@ import math
 import numpy as np
 from scipy.sparse.csgraph import shortest_path
 from torch_scatter import scatter, scatter_mean
-from ppgn_modules import *
-from ppgn_layers import *
+from modules.ppgn_modules import *
+from modules.ppgn_layers import *
 import pdb
 
 def center_pool(x, node_to_subgraph):

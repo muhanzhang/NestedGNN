@@ -115,7 +115,6 @@ print('Command line input: ' + cmd_input + ' is saved.')
 
 if args.data == 'all':
     datasets = [ 'DD', 'MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
-    datasets = [ 'MUTAG', 'PROTEINS', 'PTC_MR', 'ENZYMES']
 else:
     datasets = [args.data]
 

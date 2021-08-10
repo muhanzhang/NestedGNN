@@ -15,8 +15,8 @@ from torch_geometric.nn import (
 )
 from torch_geometric.utils import dropout_adj, to_dense_adj, to_dense_batch
 from utils import *
-from ppgn_modules import *
-from ppgn_layers import *
+from modules.ppgn_modules import *
+from modules.ppgn_layers import *
 
 from k_gnn import GraphConv, avg_pool
 
