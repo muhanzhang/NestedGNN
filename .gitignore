@@ -1,6 +1,8 @@
 data/
 backup/
 results/
+software/
+!software/k-gnn/
 *results.txt
 *.swp
 *.pyc
