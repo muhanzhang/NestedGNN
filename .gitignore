@@ -1,4 +1,6 @@
 data/
+!data/EXP/
+!data/CEXP/
 backup/
 results/
 software/
