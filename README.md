@@ -5,6 +5,9 @@ About
 -----
 Nested Graph Neural Network (NGNN) is a general framework to improve a base GNN's expressive power and performance. It consists of a base GNN (usually a weak message-passing GNN) and an outer GNN. In NGNN, we extract a rooted subgraph around each node, and let the base GNN to learn a subgraph representation from the rooted subgraph, which is used as the root node's representation. Then, the outer GNN further learns a graph representation from these root node representations returned from the base GNN (in this paper, we simply let the outer GNN be a global pooling layer without graph convolution). NGNN is proved to be more powerful than 1-WL, being able to discriminate almost all r-regular graphs where 1-WL always fails. In contrast to other high-order GNNs, NGNN only incurs a constant time higher time complexity than its base GNN (given the rooted subgraph size is bounded). NGNN often shows immediate performance gains in real-world datasets when applying it to a weak base GNN.
 
+For more details, please refer to our paper:
+> M. Zhang and P. Li, Nested Graph Neural Networks, Advances in Neural Information Processing Systems (NeurIPS-21), 2021. [\[PDF\]](https://arxiv.org/pdf/2110.13197.pdf)
+
 Requirements
 ------------
 Stable: Python 3.8 + PyTorch 1.8.1 + PyTorch\_Geometric 1.7.0 + OGB 1.3.1
@@ -93,16 +96,19 @@ To reproduce the Nested GIN result in Table 2, run the following command:
 
     python run_exp.py --dataset EXP --h 3 --learnRate 0.0001
 
+Reference
+---------
 
-Miscellaneous
--------------
+If you find the code useful, please cite our paper:
 
-We have tried our best to clean the code. We will keep polishing it after the author response. If you encounter any errors or bugs, please let us know in OpenReview. Hope you enjoy the code!
+    @article{zhang2021nested,
+      title={Nested Graph Neural Networks},
+      author={Zhang, Muhan and Li, Pan},
+      journal={arXiv preprint arXiv:2110.13197},
+      year={2021}
+    }
 
+Muhan Zhang, Peking University
+muhan@pku.edu.cn
+10/30/2021
 
-TODO
-----
-
-1. Write a doc or plot a graph to explain the NGNN data structure defined in utils.py
-
-2. Make pretransform to NGNN data structure parallel.
