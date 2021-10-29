@@ -9,7 +9,7 @@ from torch.nn import Linear, Sequential, ReLU, BatchNorm1d as BN
 from torch_scatter import scatter_mean, scatter_max
 from torch_geometric.datasets import TUDataset
 from torch_geometric.utils import degree
-from torch_geometric.nn import GINConv, global_mean_pool, global_add_pool
+from torch_geometric.nn import GCNConv, GINConv, global_add_pool
 import torch_geometric.transforms as T
 from PlanarSATPairsDataset import PlanarSATPairsDataset
 from k_gnn import GraphConv, max_pool
@@ -19,7 +19,8 @@ from utils import create_subgraphs
 import pdb
 
 
-parser = argparse.ArgumentParser(description='Nested GIN for EXP/CEXP datasets')
+parser = argparse.ArgumentParser(description='Nested GNN for EXP/CEXP datasets')
+parser.add_argument('--model', type=str, default='GIN')    # Base GNN used, GIN or GCN
 parser.add_argument('--h', type=int, default=3, 
                     help='largest height of rooted subgraphs to simulate')
 parser.add_argument('--layers', type=int, default=8)   # Number of GNN layers
@@ -57,7 +58,7 @@ EPOCHS = args.epochs
 WIDTH = args.width
 LEARNING_RATE = args.learnRate
 
-MODEL = "NestedGIN-"
+MODEL = f"Nested{args.model}-"
 
 
 if LEARNING_RATE != 0.001:
@@ -78,6 +79,45 @@ shutil.rmtree(path + '/processed')
 dataset = PlanarSATPairsDataset(root=path,
                                 pre_transform=T.Compose([MyPreTransform(), pre_transform]),
                                 pre_filter=MyFilter())
+
+
+class NestedGCN(torch.nn.Module):
+    def __init__(self, num_layers, hidden):
+        super(NestedGCN, self).__init__()
+        self.conv1 = GCNConv(dataset.num_features, hidden)
+        self.convs = torch.nn.ModuleList()
+        for i in range(num_layers - 1):
+            self.convs.append(GCNConv(hidden, hidden))
+        self.lin1 = torch.nn.Linear(hidden, hidden)
+        self.lin2 = Linear(hidden, dataset.num_classes)
+
+    def reset_parameters(self):
+        self.conv1.reset_parameters()
+        for conv in self.convs:
+            conv.reset_parameters()
+        self.lin1.reset_parameters()
+        self.lin2.reset_parameters()
+
+    def forward(self, data):
+        edge_index, batch = data.edge_index, data.batch
+        if 'x' in data:
+            x = data.x
+        else:
+            x = torch.ones([data.num_nodes, 1]).to(edge_index.device)
+        x = self.conv1(x, edge_index)
+        for conv in self.convs:
+            x = conv(x, edge_index)
+
+        x = global_add_pool(x, data.node_to_subgraph)
+        x = global_add_pool(x, data.subgraph_to_graph)
+        
+        x = F.relu(self.lin1(x))
+        x = F.dropout(x, p=0.5, training=self.training)
+        x = self.lin2(x)
+        return F.log_softmax(x, dim=1)
+
+    def __repr__(self):
+        return self.__class__.__name__
 
 
 class NestedGIN(torch.nn.Module):
@@ -135,7 +175,12 @@ class NestedGIN(torch.nn.Module):
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model = NestedGIN(args.layers, args.width).to(device)
+if args.model == 'GIN':
+    model = NestedGIN(args.layers, args.width).to(device)
+elif args.model == 'GCN':
+    model = NestedGCN(args.layers, args.width).to(device)
+else:
+    raise NotImplementedError('model type not supported')
 
 
 def train(epoch, loader, optimizer):

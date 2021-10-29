@@ -42,7 +42,7 @@ To compare it with a base GCN model only, type:
 
     python run_tu.py --model GCN --layers 4 --data MUTAG
 
-To reproduce the added experiments with hyperparameter searching, type:
+To reproduce the GCN and Nested GCN results in Table 4 with hyperparameter searching, type:
 
     python run_tu.py --model GCN --search --data MUTAG 
 
@@ -79,13 +79,19 @@ When finished, to get the ensemble test result, run
 
 ### Simulation on r-regular graphs
 
-To reproduce Appendix C Figure 3, run the following commands:
+To reproduce Appendix D Figure 3, run the following commands:
     
     python run_simulation.py --n 10 20 40 80 160 320 640 1280 --save_appendix _node --N 10 --h 10
 
     python run_simulation.py --n 10 20 40 80 160 320 640 1280 --save_appendix _graph --N 100 --h 10 --graph
 
 The results will be saved in "results/simulation\_node/" and "results/simulation\_graph/".
+
+### EXP dataset
+
+To reproduce the Nested GIN result in Table 2, run the following command:
+
+    python run_exp.py --dataset EXP --h 3 --learnRate 0.0001
 
 
 Miscellaneous
