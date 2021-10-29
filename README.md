@@ -108,7 +108,8 @@ If you find the code useful, please cite our paper:
       year={2021}
     }
 
-Muhan Zhang, Peking University
-muhan@pku.edu.cn
+Muhan Zhang\
+Peking University\
+muhan@pku.edu.cn\
 10/30/2021
 
